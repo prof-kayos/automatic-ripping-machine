@@ -15,3 +15,9 @@ ARM_PLEX_MOVIES_PATH=/mnt/nas/movies
 ARM_AUTO_REPLACE=0
 # 1 = also run the slow full decode on every rip (roughly realtime on a 4K HEVC title, so about as long as the rip; off by default, runs automatically on suspicion)
 ARM_VERIFY_FULL_DECODE=0
+
+# --- dashboard (arm-dashboard.service). The token itself goes in secrets.env as DASHBOARD_TOKEN (>= 32 random chars).
+# Bind to the machine's LAN address (not 0.0.0.0) and list every Host name you will type in the browser.
+ARM_DASHBOARD_BIND=192.0.2.10
+ARM_DASHBOARD_PORT=8088
+ARM_DASHBOARD_ALLOWED_HOSTS=192.0.2.10,ripper,localhost,127.0.0.1

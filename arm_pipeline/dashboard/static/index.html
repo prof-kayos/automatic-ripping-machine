@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>ARM Operations</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%232563eb'/%3E%3Ccircle cx='8' cy='8' r='2' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="offline" class="banner hidden" role="alert"></div>
+
+<section id="login-view" class="login hidden" aria-labelledby="login-title">
+  <form id="login-form" class="panel login-card" autocomplete="off">
+    <h1 id="login-title">ARM Operations</h1>
+    <p class="muted">Enter the dashboard access token.</p>
+    <label for="login-token">Access token</label>
+    <input id="login-token" name="token" type="password" required autocomplete="current-password">
+    <p id="login-error" class="form-error" role="alert"></p>
+    <button type="submit" class="btn primary" id="login-submit">Sign in</button>
+  </form>
+</section>
+
+<div id="app" class="hidden">
+  <header class="top">
+    <div class="top-row">
+      <h1 class="brand">ARM Operations</h1>
+      <div class="top-tools">
+        <span id="updated" class="muted num" aria-live="off">Not yet updated</span>
+        <button type="button" id="refresh" class="btn small">Refresh</button>
+        <button type="button" id="theme" class="btn small" aria-label="Toggle colour theme">Theme</button>
+        <button type="button" id="logout" class="btn small">Sign out</button>
+      </div>
+    </div>
+    <ul id="chips" class="chips" aria-label="System status"></ul>
+  </header>
+
+  <main id="main">
+    <section aria-labelledby="h-attn" class="block">
+      <h2 id="h-attn">Needs attention <span id="attn-count" class="count"></span></h2>
+      <div id="issues"></div>
+    </section>
+
+    <section aria-labelledby="h-now" class="block">
+      <h2 id="h-now">Now processing</h2>
+      <div id="now" class="panel" aria-live="polite"></div>
+    </section>
+
+    <div class="cols">
+      <section aria-labelledby="h-act" class="block">
+        <div class="h-row">
+          <h2 id="h-act">Activity</h2>
+          <div class="filters" role="group" aria-label="Activity filter">
+            <button type="button" class="filter" data-filter="all" aria-pressed="true">All</button>
+            <button type="button" class="filter" data-filter="warn" aria-pressed="false">Warnings + errors</button>
+          </div>
+        </div>
+        <ol id="events" class="events panel"></ol>
+      </section>
+
+      <section aria-labelledby="h-hist" class="block">
+        <h2 id="h-hist">History</h2>
+        <div class="panel table-wrap">
+          <table id="jobs" class="jobs">
+            <thead><tr><th scope="col">Title</th><th scope="col">State</th><th scope="col">Action</th><th scope="col">Age</th><th scope="col">Message</th></tr></thead>
+            <tbody id="jobs-body"></tbody>
+          </table>
+          <p id="jobs-empty" class="muted pad hidden">No jobs yet.</p>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+<div id="overlay" class="overlay hidden"></div>
+</body>
+</html>

@@ -18,6 +18,21 @@ tells Plex and Jellyfin -> posts to Slack -> ejects.
 Always: MakeMKV log scan, ffprobe sanity (duration/streams/size), demux integrity pass and a sampled decode (12 x 20 s
 windows) run concurrently with the share copy. Full decode only if something looks suspicious or `ARM_VERIFY_FULL_DECODE=1`.
 
+## Dashboard (monitor and fix problems from a browser)
+`python3 -m arm_pipeline.dashboard` (unit: `deploy/arm-dashboard.service`) serves a single-page UI + JSON API, stdlib only.
+* **Needs attention**: rule-based issues with one-click fixes (a disc waiting for a title gets a TMDb search + Resume; failed jobs
+  Retry/Dismiss; replacements Approve/Reject; duplicate records Dismiss; service/share/drive/scratch/integration problems).
+* **Now processing**: live phase, percent, rate, ETA and GB from `progress.json` (the daemon writes it while ripping/copying).
+* **Activity** feed (every Slack message and operator action, from `events.jsonl`) and **History** with a per-disc detail drawer.
+* Security model: one shared token (`DASHBOARD_TOKEN`, >= 32 chars, required), HttpOnly SameSite=Strict session cookie, per-session
+  CSRF header + required Origin on every POST, Host allowlist (anti DNS-rebinding), private-network clients only, loopback bind by
+  default, connection caps and timeouts, strict CSP (no inline script/style), all text rendered with `textContent`, every action
+  audited as an event, secrets never returned or logged. It is for a trusted LAN over plain HTTP; put it behind TLS + SSO before any
+  wider exposure (set `ARM_DASHBOARD_SECURE_COOKIE=1` and the proxy host in `ARM_DASHBOARD_ALLOWED_HOSTS`).
+* Preview with fake data: `python3 tools/dashboard_mock.py --port 8099` (token `demo`; `?scenario=attention|busy|down|clear`).
+* The daemon does not trust the dashboard: identity answers and approvals are command files that the daemon re-validates (regular
+  file, owner, size, strict title/year rules, state check) before acting.
+
 ## CLI
 `python3 -m arm_pipeline status | approve FP | reject FP | identify FP "Title (Year)" | retry FP | skip FP`
 
