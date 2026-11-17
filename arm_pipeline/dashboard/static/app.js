@@ -548,7 +548,7 @@ function renderJobs(list) {
       h('td', { 'data-label': 'State' }, badge(j.state)),
       h('td', { 'data-label': 'Action', text: j.action || '–' }),
       h('td', { 'data-label': 'Age', class: 'num', text: j.age_s == null ? '–' : fmtAge(j.age_s) }),
-      h('td', { 'data-label': 'Message', text: j.message || '' }));
+      h('td', { 'data-label': 'Message' }, h('span', { class: 'msg', text: j.message || '', title: j.message || '' })));
     body.append(tr);
   }
 }

@@ -83,6 +83,15 @@ class TestHtml(unittest.TestCase):
         self.assertRegex(rules[".jobs td:nth-child(2) .badge"], r"white-space:\s*nowrap")
         self.assertNotIn("anywhere", rules[".jobs td:nth-child(1)"])
 
+    def test_job_message_is_clamped_with_full_text_in_tooltip(self):
+        css = re.sub(r"/\*.*?\*/", "", (STATIC / "style.css").read_text(), flags=re.S)
+        m = re.search(r"\.jobs \.msg\s*\{([^{}]*)\}", css)
+        self.assertIsNotNone(m)
+        self.assertRegex(m.group(1), r"-webkit-line-clamp:\s*3")
+        self.assertRegex(m.group(1), r"overflow:\s*hidden")
+        js = (STATIC / "app.js").read_text()
+        self.assertRegex(js, r"class: 'msg', text: j\.message \|\| '', title: j\.message \|\| ''")   # full text stays reachable
+
     def test_theme_assets_original_and_whitelisted(self):
         allowed = {"index.html", "app.js", "style.css", "favicon.svg", "favicon.ico", "icon.svg", "manifest.webmanifest"}
         for f in STATIC.iterdir():

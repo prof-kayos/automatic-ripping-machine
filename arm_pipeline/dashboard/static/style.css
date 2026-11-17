@@ -209,6 +209,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 22px 16px 8px; display: grid;
 .jobs td:nth-child(1) { overflow-wrap: break-word; }
 .jobs td:nth-child(2), .jobs td:nth-child(4) { overflow-wrap: normal; white-space: nowrap; }
 .jobs td:nth-child(2) .badge { flex-wrap: nowrap; white-space: nowrap; }
+/* long messages show 3 lines in the table; the full text is in the row tooltip and the detail drawer */
+.jobs .msg { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
 .jobs tbody tr { cursor: pointer; }
 .jobs tbody tr:hover { background: var(--surface2); }
 .rowbtn { font: 800 14px var(--mono); color: var(--text); background: none; border: 0; padding: 0; text-align: left; cursor: pointer; overflow-wrap: break-word; text-transform: uppercase; }
