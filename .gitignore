@@ -177,6 +177,8 @@ removed/*
 */installed
 */.idea/*
 */config.py
+# arm_pipeline/config.py is source code (the pipeline's Config dataclass), not an ARM runtime config file
+!arm_pipeline/config.py
 */arm_wrapper.sh
 */arm.conf
 */arm.yaml
