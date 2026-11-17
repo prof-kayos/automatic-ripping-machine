@@ -6,7 +6,9 @@ ARM_SG_DEV=/dev/sg1
 # media servers: URLs, and the movies path AS EACH SERVER SEES IT (can differ from ARM_MOVIES_DIR)
 JELLYFIN_URL=http://jellyfin.example.invalid:8096
 ARM_JELLYFIN_MOVIES_PATH=/mnt/nas/movies
-PLEX_URL=https://plex.example.invalid:32400
+# Plex serves a *.plex.direct certificate: connect with https://<ip-with-dashes>.<your-server-hash>.plex.direct:32400
+# (resolves to the server's LAN IP and verifies). A custom hostname fails certificate verification.
+PLEX_URL=https://10-0-0-1.0000000000000000.plex.direct:32400
 PLEX_SECTION_ID=1
 ARM_PLEX_MOVIES_PATH=/mnt/nas/movies
 # a replacement always waits for approval unless this is 1 AND the folder matched exactly
