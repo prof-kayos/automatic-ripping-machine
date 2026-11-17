@@ -335,6 +335,33 @@ class HardeningTests(Base):
         r, _ = self.req("GET", "/api/session")
         self.assertEqual(r.getheader("Cache-Control"), "no-store")
 
+    def test_the_page_loads_with_every_asset_it_references(self):
+        """Regression: index.html asked for style.css/app.js/favicon.svg at the site root while the server only served
+        /static/<name>, so a real browser got an unstyled, non-functional page (each half passed its own tests)."""
+        import re
+        import shutil
+        from urllib.parse import urljoin
+        shutil.copytree(srv.STATIC_DIR, self.static, dirs_exist_ok=True)     # the REAL page and assets, not the fixture's stubs
+        r, body = self.req("GET", "/")
+        self.assertEqual(r.status, 200)
+        html = body.decode()
+        refs = re.findall(r'(?:href|src)="([^"#]+)"', html)
+        local = [u for u in refs if not re.match(r"^(https?:|data:|//)", u)]
+        self.assertTrue({"style.css", "app.js"} <= set(local), local)
+        want_type = {".css": "text/css", ".js": "javascript", ".svg": "image/svg+xml"}
+        for u in local:
+            r, b = self.req("GET", urljoin("/", u))
+            self.assertEqual(r.status, 200, f"{u} -> {r.status}")
+            self.assertTrue(b, u)
+            ext = "." + u.rsplit(".", 1)[-1]
+            if ext in want_type:
+                self.assertIn(want_type[ext], r.getheader("Content-Type", ""), u)
+        # the same files remain reachable under /static/, and only exact whitelisted names work at the root
+        self.assertEqual(self.req("GET", "/static/app.js")[0].status, 200)
+        for bad in ("/config.py", "/server.py", "/..%2fconfig.py", "/%2e%2e/config.py", "/static", "/app.js/", "/a/app.js",
+                    "/data.py", "/.env"):
+            self.assertEqual(self.req("GET", bad)[0].status, 404, bad)
+
     def test_static_serving(self):
         r, b = self.req("GET", "/")
         self.assertEqual((r.status, b), (200, b"<html>hi</html>"))

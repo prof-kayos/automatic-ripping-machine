@@ -387,7 +387,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.connection.settimeout(SOCKET_TIMEOUT)     # headers parsed; allow the body more time
             self._check_host()
-            if method == "GET" and (path == "/" or path.startswith("/static/")):
+            if method == "GET" and (path == "/" or path.startswith("/static/") or self._is_root_asset(path)):
                 return self._static(path)
             if not path.startswith("/api/"):
                 raise _HttpError(404, "not found")
@@ -432,8 +432,19 @@ class Handler(BaseHTTPRequestHandler):
     do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD
 
     # ---- static files
+    @staticmethod
+    def _is_root_asset(path):
+        """index.html refers to its files by bare name (style.css, app.js, favicon.svg), i.e. at the site root: serve the
+        whitelisted names there too. Only an exact whitelisted file name qualifies, never a path."""
+        return path.count("/") == 1 and unquote(path[1:]) in STATIC_FILES
+
     def _static(self, path):
-        rel = "index.html" if path == "/" else unquote(path[len("/static/"):])
+        if path == "/":
+            rel = "index.html"
+        elif path.startswith("/static/"):
+            rel = unquote(path[len("/static/"):])
+        else:
+            rel = unquote(path[1:])
         if rel not in STATIC_FILES and rel not in self.server.static_whitelist:
             raise _HttpError(404, "not found")
         root = self.server.static_dir
