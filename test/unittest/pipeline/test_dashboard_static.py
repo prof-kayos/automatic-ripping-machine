@@ -61,6 +61,18 @@ class TestHtml(unittest.TestCase):
             txt = txt.replace("http://www.w3.org/2000/svg", "")
             self.assertNotRegex(txt, r"https?://", name)
 
+    def test_no_light_only_background_rule_that_applies_in_dark_mode(self):
+        """Regression: `:root:not([data-theme]) .result { background: <light> }` also matched a dark-mode browser that had
+        not toggled the theme, giving light text (the dark --text) on a cream background in the movie search results."""
+        css = (STATIC / "style.css").read_text()
+        for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+            sel, body = m.group(1), m.group(2)
+            if ":not([data-theme])" in sel and re.search(r"background(-color)?\s*:\s*#[0-9a-fA-F]{3,6}\b", body):
+                self.fail("a hard-coded background applies whenever no theme is chosen, including dark mode: " + sel.strip())
+        # every themed input type must have a dark-mode override, not only text/password
+        for t in ("text", "password", "number", "search"):
+            self.assertIn('[data-theme="dark"] input[type=%s]' % t, css)
+
     def test_theme_assets_original_and_whitelisted(self):
         allowed = {"index.html", "app.js", "style.css", "favicon.svg", "favicon.ico", "icon.svg", "manifest.webmanifest"}
         for f in STATIC.iterdir():
