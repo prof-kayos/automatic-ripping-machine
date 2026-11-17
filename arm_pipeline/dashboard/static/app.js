@@ -241,11 +241,19 @@ $('login-form').addEventListener('submit', async (e) => {
     else err.textContent = 'Could not sign in: ' + x.message;
   } finally { btn.disabled = false; }
 });
+$('login-sso').addEventListener('click', async () => {
+  const err = $('login-error'); err.textContent = '';
+  try {
+    const r = await api('POST', '/api/login', { sso: true }, { noAuthRedirect: true });
+    st.csrf = r.csrf; showApp();
+  } catch (x) { err.textContent = 'SSO sign-in was not accepted.'; }
+});
 $('logout').addEventListener('click', async () => {
   const csrf = st.csrf;
   stopPolling(); abortAll();
   try { st.csrf = csrf; await api('POST', '/api/logout', {}, { noAuthRedirect: true }); } catch (_) { /* ignore */ }
   showLogin();
+  try { const s = await api('GET', '/api/session', null, { noAuthRedirect: true }); if (s && s.sso) $('login-sso').classList.remove('hidden'); } catch (_) { /* ignore */ }
 });
 
 /* ---------- theme ---------- */
@@ -634,7 +642,7 @@ $('refresh').addEventListener('click', refreshAll);
 (async function boot() {
   try {
     const s = await api('GET', '/api/session', null, { noAuthRedirect: true });
-    if (s && s.authenticated) { st.csrf = s.csrf; showApp(); } else showLogin();
+    if (s && s.authenticated) { st.csrf = s.csrf; showApp(); } else { showLogin(); if (s && s.sso) $('login-sso').classList.remove('hidden'); }
   } catch (e) { showLogin(); $('login-error').textContent = 'Cannot reach the server.'; }
 })();
 

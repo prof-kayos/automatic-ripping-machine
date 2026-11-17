@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .. import operator as ops
 from ..ledger import Ledger
-from .auth import COOKIE_NAME, Auth
+from .auth import COOKIE_NAME, NOSSO_COOKIE, Auth
 
 log = logging.getLogger("arm_pipeline.dashboard")
 
@@ -41,6 +41,10 @@ CONTENT_TYPES = {
     ".webmanifest": "application/manifest+json",
 }
 _FP = r"([^/]+)"
+SSO_USER_RE = re.compile(r"[A-Za-z0-9._@+-]{1,64}")
+SSO_GROUP_RE = re.compile(r"[A-Za-z0-9._@+ -]{1,64}")
+SSO_USER_HEADER = "X-authentik-username"
+SSO_GROUPS_HEADER = "X-authentik-groups"
 
 
 class _HttpError(Exception):
@@ -93,6 +97,21 @@ def _ip_allowed(ip: str) -> bool:
     return any(a in ipaddress.ip_network(n) for n in nets)
 
 
+def _norm_ip(ip: str):
+    """Canonical address for exact comparison (IPv4-mapped IPv6 folded to IPv4), or None if it is not an IP."""
+    try:
+        a = ipaddress.ip_address(str(ip).split("%")[0])
+    except ValueError:
+        return None
+    if isinstance(a, ipaddress.IPv6Address) and a.ipv4_mapped:
+        a = a.ipv4_mapped
+    return a
+
+
+def _csv(spec: str):
+    return [x.strip() for x in (spec or "").split(",") if x.strip()]
+
+
 def _ip_in_list(ip: str, spec: str) -> bool:
     """True if `ip` is loopback or matches one of the comma-separated IPs/CIDRs in `spec` (bad entries are ignored)."""
     try:
@@ -141,6 +160,18 @@ class DashboardServer(ThreadingHTTPServer):
             if not _is_any_bind(bind):
                 hosts.add(bind.lower())
         self.allowed_hosts = hosts
+        self.sso = bool(getattr(cfg, "dashboard_sso", False))
+        self._warned = set()
+        self.sso_proxies = frozenset()
+        self.sso_users = frozenset(_csv(getattr(cfg, "dashboard_sso_users", "")))
+        self.sso_groups = frozenset(_csv(getattr(cfg, "dashboard_sso_groups", "")))
+        if self.sso:
+            proxies = [_norm_ip(x) for x in _csv(getattr(cfg, "dashboard_trusted_proxy", ""))]
+            if not proxies or any(p is None for p in proxies):
+                raise ValueError("ARM_DASHBOARD_SSO needs ARM_DASHBOARD_TRUSTED_PROXY: a comma list of exact proxy IP addresses")
+            if not self.sso_users and not self.sso_groups:
+                raise ValueError("ARM_DASHBOARD_SSO needs ARM_DASHBOARD_SSO_USERS and/or ARM_DASHBOARD_SSO_GROUPS")
+            self.sso_proxies = frozenset(proxies)
         self._conn_sem = threading.BoundedSemaphore(MAX_CONNECTIONS)
         self._conn_lock = threading.Lock()
         self._conn_ips = collections.Counter()
@@ -191,6 +222,12 @@ class DashboardServer(ThreadingHTTPServer):
             super().process_request_thread(request, client_address)
         finally:
             self._release(client_address[0])
+
+    def warn_once(self, reason, msg, *args):
+        """Log a warning once per rejection reason (args must already be sanitised)."""
+        if reason not in self._warned:
+            self._warned.add(reason)
+            log.warning(msg, *args)
 
     def audit(self, action, fp, ok, ip, text=None, **data):
         """One 'operator' event per action; never receives tokens or CSRF values."""
@@ -265,7 +302,8 @@ class Handler(BaseHTTPRequestHandler):
         if api:
             self.send_header("Cache-Control", "no-store")
         for k, v in (headers or {}).items():
-            self.send_header(k, v)
+            for item in (v if isinstance(v, (list, tuple)) else [v]):
+                self.send_header(k, item)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -299,11 +337,67 @@ class Handler(BaseHTTPRequestHandler):
                 return v
         return None
 
+    def _nosso(self):
+        for part in self.headers.get("Cookie", "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == NOSSO_COOKIE:
+                return True
+        return False
+
+    def _sso_user(self):
+        """Username asserted by the trusted proxy for THIS request, or None.
+
+        Believed only when SSO is enabled, the TCP peer is exactly a configured proxy address (never X-Forwarded-For),
+        there is exactly one well-formed username header, and the user (or one of a well-formed groups header) is allowed.
+        """
+        srv = self.server
+        if not srv.sso:
+            return None
+        names = self.headers.get_all(SSO_USER_HEADER) or []
+        if not names:
+            return None
+        if _norm_ip(self._client_ip()) not in srv.sso_proxies:
+            log.warning("ignoring %s from untrusted peer %s", SSO_USER_HEADER, self._client_ip())
+            return None
+        if len(names) != 1 or not SSO_USER_RE.fullmatch(names[0]):
+            return None
+        user = names[0]
+        if user in srv.sso_users:
+            return user
+        if srv.sso_groups:
+            gh = self.headers.get_all(SSO_GROUPS_HEADER) or []
+            if len(gh) > 1:
+                srv.warn_once("dup-groups", "ignoring duplicate %s headers", SSO_GROUPS_HEADER)
+            elif gh:
+                for g in gh[0].split("|"):
+                    if not SSO_GROUP_RE.fullmatch(g):
+                        srv.warn_once("bad-group", "skipping malformed/over-long group segment %s in %s", ascii(g[:20]), SSO_GROUPS_HEADER)
+                    elif g in srv.sso_groups:
+                        return user
+        return None
+
+    def _who(self, sid):
+        u = self.server.auth.session_user(sid)
+        return {"user": u} if u else {}
+
     def _require_auth(self):
         sid = self._sid()
-        if self.server.auth.session_csrf(sid) is None:
+        auth = self.server.auth
+        if auth.session_csrf(sid) is None:
+            raise _HttpError(401, "authentication required")
+        if not self._sso_still_valid(sid):
             raise _HttpError(401, "authentication required")
         return sid
+
+    def _sso_still_valid(self, sid):
+        """False (and the session revoked) when it is an SSO session the proxy no longer vouches for."""
+        auth = self.server.auth
+        owner = auth.session_user(sid)
+        if owner is not None and self._sso_user() != owner:   # SSO session: the proxy must keep vouching for the same user
+            auth.logout(sid)
+            self.server.audit("session", None, False, self._client_ip(), text=f"sso session revoked: {owner}", user=owner)
+            return False
+        return True
 
     def _check_origin(self):
         """POST only: Origin is REQUIRED and must be scheme://Host of an allowed host."""
@@ -465,6 +559,12 @@ class Handler(BaseHTTPRequestHandler):
     def h_login(self, g, q, body, sid):
         ip = self._client_ip()
         auth = self.server.auth
+        if body.get("sso") is True and self.server.sso:
+            user = self._sso_user()
+            if user is None:
+                self.server.audit("login", None, False, ip, text="sso login refused")
+                raise _HttpError(401, "SSO identity not available or not permitted")
+            return self._sso_session(user, ip, clear_nosso=True)
         new_sid, info = auth.login(ip, body.get("token"))
         if new_sid is None:
             n = auth.fail_count(ip)
@@ -476,13 +576,47 @@ class Handler(BaseHTTPRequestHandler):
         self.server.audit("login", None, True, ip, text="login ok")
         self._json(200, {"ok": True, "csrf": info}, headers={"Set-Cookie": auth.cookie_header(new_sid)})
 
+    def _sso_session(self, user, ip, clear_nosso=False):
+        auth = self.server.auth
+        auth.logout(self._sid())               # always a fresh sid; retire any presented one
+        new_sid, csrf = auth.login_sso(user)
+        cookies = [auth.cookie_header(new_sid)] + ([auth.clear_nosso_cookie_header()] if clear_nosso else [])
+        self.server.audit("login", None, True, ip, text=f"sso login ok: {user}", user=user, via="sso")
+        self._json(200, {"ok": True, "authenticated": True, "csrf": csrf, "user": user},
+                   headers={"Set-Cookie": cookies})
+
     def h_session(self, g, q, body, sid):
-        csrf = self.server.auth.session_csrf(self._sid())
-        self._json(200, {"authenticated": True, "csrf": csrf} if csrf else {"authenticated": False})
+        sid = self._sid()
+        csrf = self.server.auth.session_csrf(sid)
+        if csrf and not self._sso_still_valid(sid):
+            return self._json(200, {"authenticated": False})
+        if csrf:
+            out = {"authenticated": True, "csrf": csrf}
+            user = self.server.auth.session_user(sid)
+            if user:
+                out["user"] = user
+            return self._json(200, out)
+        user = self._sso_user()
+        if user is None:
+            return self._json(200, {"authenticated": False})
+        sfs = self.headers.get("Sec-Fetch-Site")
+        if sfs is not None and sfs.lower() not in ("same-origin", "none"):
+            return self._json(200, {"authenticated": False})       # never mint for a cross-site initiated request
+        if self._nosso():                      # signed out on purpose: offer the button, do not re-mint
+            return self._json(200, {"authenticated": False, "sso": True})
+        self._sso_session(user, self._client_ip())
 
     def h_logout(self, g, q, body, sid):
-        self.server.auth.logout(self._sid())
-        self._json(200, {"ok": True}, headers={"Set-Cookie": self.server.auth.clear_cookie_header()})
+        auth = self.server.auth
+        sid = self._sid()
+        user = auth.session_user(sid)
+        auth.logout(sid)
+        if user:
+            self.server.audit("logout", None, True, self._client_ip(), text=f"sso logout: {user}", user=user)
+        cookies = [auth.clear_cookie_header()]
+        if self.server.sso:
+            cookies.append(auth.nosso_cookie_header())
+        self._json(200, {"ok": True}, headers={"Set-Cookie": cookies})
 
     # ---- handlers: data
     def h_status(self, g, q, body, sid):
@@ -554,7 +688,8 @@ class Handler(BaseHTTPRequestHandler):
             res = ops.skip(s.cfg, s.ledger, fp, drive_mod=s.drive_mod)
         else:
             res = getattr(ops, action)(s.cfg, s.ledger, fp)
-        self.server.audit(action, fp, res.get("ok"), self._client_ip(), text=f"{action}: {res.get('message', '')}")
+        self.server.audit(action, fp, res.get("ok"), self._client_ip(), text=f"{action}: {res.get('message', '')}",
+                          **self._who(sid))
         status, out = self._result(res)
         self._json(status, out)
 
@@ -564,14 +699,15 @@ class Handler(BaseHTTPRequestHandler):
         s = self.server
         res = ops.identify(s.cfg, s.ledger, fp, body.get("title"), body.get("year"), body.get("tmdb_id"))
         self.server.audit("identify", fp, res.get("ok"), self._client_ip(),
-                          text=f"identify: {res.get('message', '')}")
+                          text=f"identify: {res.get('message', '')}", **self._who(sid))
         status, out = self._result(res)
         self._json(status, out)
 
     def h_eject(self, g, q, body, sid):
         s = self.server
         res = ops.eject_now(s.cfg, s.ledger, drive_mod=s.drive_mod)
-        self.server.audit("eject", None, res.get("ok"), self._client_ip(), text=f"eject: {res.get('message', '')}")
+        self.server.audit("eject", None, res.get("ok"), self._client_ip(), text=f"eject: {res.get('message', '')}",
+                          **self._who(sid))
         status, out = self._result(res)
         self._json(status, out)
 

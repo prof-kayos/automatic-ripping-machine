@@ -664,3 +664,202 @@ class ActionTests(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SsoTests(Base):
+    """Opt-in trust of Authentik forward-auth headers asserted by a configured proxy address."""
+
+    def start(self, **cfgkw):
+        kw = dict(dashboard_sso=True, dashboard_trusted_proxy="127.0.0.1", dashboard_sso_users="alice",
+                  dashboard_sso_groups="ripper-admins")
+        kw.update(cfgkw)
+        super().start(**kw)
+
+    def sso(self, user="alice", groups=None, extra=None):
+        h = {"X-authentik-username": user}
+        if groups is not None:
+            h["X-authentik-groups"] = groups
+        h.update(extra or {})
+        return h
+
+    def mint(self, **kw):
+        st, js, r = self.jreq("GET", "/api/session", headers=self.sso(**kw))
+        return st, js, r
+
+    def test_off_by_default(self):
+        self.assertFalse(Config().dashboard_sso)
+        self.assertFalse(Config.from_env({}).dashboard_sso)
+        self.start(dashboard_sso=False)
+        st, js, r = self.mint()
+        self.assertEqual(js, {"authenticated": False})
+        self.assertIsNone(r.getheader("Set-Cookie"))
+
+    def test_config_env(self):
+        c = Config.from_env({"ARM_DASHBOARD_SSO": "1", "ARM_DASHBOARD_TRUSTED_PROXY": "192.0.2.5",
+                             "ARM_DASHBOARD_SSO_USERS": "a,b", "ARM_DASHBOARD_SSO_GROUPS": "g"})
+        self.assertTrue(c.dashboard_sso)
+        self.assertEqual((c.dashboard_trusted_proxy, c.dashboard_sso_users, c.dashboard_sso_groups), ("192.0.2.5", "a,b", "g"))
+
+    def test_startup_validation(self):
+        for kw in ({"dashboard_trusted_proxy": ""}, {"dashboard_trusted_proxy": "10.0.0.0/8"},
+                   {"dashboard_sso_users": "", "dashboard_sso_groups": ""}):
+            with self.assertRaises(ValueError):
+                srv.DashboardServer(self.make_cfg(**dict(dict(dashboard_sso=True, dashboard_trusted_proxy="127.0.0.1",
+                                                              dashboard_sso_users="a"), **kw)),
+                                    address=("127.0.0.1", 0))
+
+    def test_user_allowed_mints_session_with_csrf(self):
+        st, js, r = self.mint()
+        self.assertTrue(js["authenticated"] and js["csrf"])
+        self.assertEqual(js["user"], "alice")
+        ck = r.getheader("Set-Cookie")
+        for part in ("arm_session=", "HttpOnly", "SameSite=Strict"):
+            self.assertIn(part, ck)
+        h = {"Cookie": ck.split(";")[0], "X-CSRF-Token": js["csrf"], **self.sso()}
+        self.assertEqual(self.jreq("GET", "/api/status", headers=h)[0], 200)
+
+    def test_post_still_needs_csrf(self):
+        st, js, r = self.mint()
+        self.put("awaiting_identity")
+        cookie = {"Cookie": r.getheader("Set-Cookie").split(";")[0], **self.sso()}
+        self.assertEqual(self.jreq("POST", f"/api/jobs/{FP}/dismiss", {}, headers=cookie)[0], 403)
+        bad = dict(cookie, **{"X-CSRF-Token": "nope"})
+        self.assertEqual(self.jreq("POST", f"/api/jobs/{FP}/dismiss", {}, headers=bad)[0], 403)
+        ok = dict(cookie, **{"X-CSRF-Token": js["csrf"], "Origin": "http://evil.example"})
+        self.assertEqual(self.jreq("POST", f"/api/jobs/{FP}/dismiss", {}, headers=ok, origin=False)[0], 403)
+
+    def test_wrong_user_rejected(self):
+        st, js, r = self.mint(user="mallory")
+        self.assertEqual(js, {"authenticated": False})
+        self.assertIsNone(r.getheader("Set-Cookie"))
+        self.assertEqual(self.jreq("POST", "/api/login", {"sso": True}, headers=self.sso("mallory"))[0], 401)
+
+    def test_group_rule(self):
+        self.assertTrue(self.mint(user="bob", groups="x|ripper-admins")[1]["authenticated"])
+        self.assertFalse(self.mint(user="bob", groups="x|ripper-users")[1]["authenticated"])
+        self.assertFalse(self.mint(user="bob")[1]["authenticated"])
+        self.assertFalse(self.mint(user="bob", groups="other|bad\x01group")[1]["authenticated"])
+        self.assertFalse(self.mint(user="bob", groups="")[1]["authenticated"])
+
+    def test_odd_usernames_rejected(self):
+        for u in ("al/ice", "alice;x", "a" * 65, "", "alice\x00", "alicé", "alice\tx"):
+            self.assertFalse(self.mint(user=u)[1]["authenticated"], repr(u))
+
+    def test_crlf_header_injection_rejected(self):
+        c = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        c.sendall(b"GET /api/session HTTP/1.0\r\nHost: 127.0.0.1:%d\r\nX-authentik-username: alice\r\n"
+                  b"X-authentik-username: alice\r\n\r\n" % self.port)
+        data = b""
+        while True:
+            b = c.recv(4096)
+            if not b:
+                break
+            data += b
+        c.close()
+        self.assertNotIn(b"Set-Cookie", data)          # duplicate username header: refused
+        self.assertIn(b'"authenticated": false', data)
+
+    def test_spoof_from_non_proxy_peer_rejected(self):
+        self.start(dashboard_trusted_proxy="192.0.2.77")        # the test client is 127.0.0.1, not the proxy
+        st, js, r = self.mint()
+        self.assertEqual(js, {"authenticated": False})
+        self.assertIsNone(r.getheader("Set-Cookie"))
+        self.assertEqual(self.jreq("POST", "/api/login", {"sso": True}, headers=self.sso())[0], 401)
+        # X-Forwarded-For naming the proxy does not help
+        st, js, r = self.mint(extra={"X-Forwarded-For": "192.0.2.77"})
+        self.assertFalse(js["authenticated"])
+
+    def test_ipv4_mapped_peer_normalised(self):
+        self.assertEqual(srv._norm_ip("::ffff:192.0.2.5"), srv._norm_ip("192.0.2.5"))
+        self.assertIsNone(srv._norm_ip("garbage"))
+
+    def test_token_login_still_works(self):
+        self.assertIsNotNone(self.login())
+        st, js, _ = self.jreq("POST", "/api/login", {"token": "wrong"})
+        self.assertEqual(st, 401)
+
+    def test_cross_site_get_does_not_mint(self):
+        st, js, r = self.jreq("GET", "/api/session", headers=self.sso(extra={"Sec-Fetch-Site": "cross-site"}))
+        self.assertFalse(js["authenticated"])
+        self.assertIsNone(r.getheader("Set-Cookie"))
+
+    def test_logout_suppresses_remint_until_button(self):
+        st, js, r = self.mint()
+        cookie = r.getheader("Set-Cookie").split(";")[0]
+        st, js2, r2 = self.jreq("POST", "/api/logout", {}, headers={"Cookie": cookie, **self.sso()})
+        cks = r2.msg.get_all("Set-Cookie")
+        self.assertEqual(len(cks), 2)
+        nosso = [c for c in cks if c.startswith("arm_nosso=1")][0].split(";")[0]
+        st, js3, r3 = self.jreq("GET", "/api/session", headers={"Cookie": nosso, **self.sso()})
+        self.assertEqual(js3, {"authenticated": False, "sso": True})
+        self.assertIsNone(r3.getheader("Set-Cookie"))
+        st, js4, r4 = self.jreq("POST", "/api/login", {"sso": True}, headers={"Cookie": nosso, **self.sso()})
+        self.assertEqual(st, 200)
+        self.assertTrue(js4["csrf"])
+        self.assertTrue(any(c.startswith("arm_nosso=;") for c in r4.msg.get_all("Set-Cookie")))
+        # the old session is really gone
+        self.assertEqual(self.jreq("GET", "/api/status", headers={"Cookie": cookie, **self.sso()})[0], 401)
+
+    def test_malformed_group_segment_does_not_reject_header(self):
+        for g in ("ripper-admins|Team/Ops", "Team/Ops|ripper-admins", "x" * 100 + "|ripper-admins"):
+            self.assertTrue(self.mint(user="bob", groups=g)[1]["authenticated"], g)
+        self.assertFalse(self.mint(user="bob", groups="Team/Ops|ripper-admins2")[1]["authenticated"])   # exact match only
+        self.assertFalse(self.mint(user="bob", groups="Ripper-Admins")[1]["authenticated"])
+        c = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        c.sendall(b"GET /api/session HTTP/1.0\r\nHost: 127.0.0.1:%d\r\nX-authentik-username: bob\r\n"
+                  b"X-authentik-groups: ripper-admins\r\nX-authentik-groups: ripper-admins\r\n\r\n" % self.port)
+        data = b""
+        while True:
+            b = c.recv(4096)
+            if not b:
+                break
+            data += b
+        c.close()
+        self.assertNotIn(b"Set-Cookie", data)          # duplicate groups header still refused
+
+    def test_session_endpoint_revalidates_existing_session(self):
+        st, js, r = self.mint()
+        cookie = {"Cookie": r.getheader("Set-Cookie").split(";")[0]}
+        self.assertTrue(self.jreq("GET", "/api/session", headers={**cookie, **self.sso()})[1]["authenticated"])
+        self.assertFalse(self.jreq("GET", "/api/session", headers={**cookie, **self.sso("mallory")})[1]["authenticated"])
+        self.assertFalse(self.jreq("GET", "/api/session", headers=cookie)[1]["authenticated"])
+        self.assertEqual(self.jreq("GET", "/api/status", headers={**cookie, **self.sso()})[0], 401)   # revoked for good
+
+    def test_repeated_cookieless_mints_bounded_and_do_not_evict_others(self):
+        from arm_pipeline.dashboard import auth as authmod
+        a = self.httpd.auth
+        for i in range(5):
+            a.login_sso("carol")
+        carol0 = [k for k, v in a._sessions.items() if v[2] == "carol"]
+        self.assertEqual(len(carol0), authmod.MAX_SSO_PER_USER)
+        for i in range(authmod.MAX_SESSIONS - authmod.MAX_SSO_PER_USER - 2):   # nearly fill the table with other users
+            a.login_sso("user%d" % i)
+        others = {k for k, v in a._sessions.items() if v[2] != "carol"}
+        for i in range(60):
+            self.mint()
+        alice = [k for k, v in a._sessions.items() if v[2] == "alice"]
+        self.assertLessEqual(len(alice), authmod.MAX_SSO_PER_USER)
+        self.assertTrue(others <= set(a._sessions))             # nobody else was evicted
+        self.assertTrue(set(carol0) <= set(a._sessions))
+
+    def test_session_revoked_when_proxy_stops_vouching(self):
+        st, js, r = self.mint()
+        cookie = {"Cookie": r.getheader("Set-Cookie").split(";")[0]}
+        self.assertEqual(self.jreq("GET", "/api/status", headers={**cookie, **self.sso()})[0], 200)
+        self.assertEqual(self.jreq("GET", "/api/status", headers={**cookie, **self.sso("mallory")})[0], 401)
+        self.assertEqual(self.jreq("GET", "/api/status", headers={**cookie, **self.sso()})[0], 401)   # killed for good
+
+    def test_session_revoked_without_headers(self):
+        st, js, r = self.mint()
+        cookie = {"Cookie": r.getheader("Set-Cookie").split(";")[0]}
+        self.assertEqual(self.jreq("GET", "/api/status", headers=cookie)[0], 401)
+
+    def test_audit_records_sso_user(self):
+        st, js, r = self.mint()
+        self.put("awaiting_identity")
+        h = {"Cookie": r.getheader("Set-Cookie").split(";")[0], "X-CSRF-Token": js["csrf"], **self.sso()}
+        self.jreq("POST", f"/api/jobs/{FP}/dismiss", {}, headers=h)
+        evs = EventLog(self.cfg.state_path).tail(100)
+        users = [e["data"].get("user") for e in evs]
+        self.assertIn("alice", users)
+        self.assertTrue(any(e["data"].get("action") == "dismiss" and e["data"].get("user") == "alice" for e in evs))

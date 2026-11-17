@@ -29,6 +29,14 @@ windows) run concurrently with the share copy. Full decode only if something loo
   default, connection caps and timeouts, strict CSP (no inline script/style), all text rendered with `textContent`, every action
   audited as an event, secrets never returned or logged. It is for a trusted LAN over plain HTTP; put it behind TLS + SSO before any
   wider exposure (set `ARM_DASHBOARD_SECURE_COOKIE=1` and the proxy host in `ARM_DASHBOARD_ALLOWED_HOSTS`).
+* Optional SSO (`ARM_DASHBOARD_SSO=1`, off by default; see `deploy/arm-pipeline.conf.example`): when the peer address is exactly
+  `ARM_DASHBOARD_TRUSTED_PROXY` and `X-authentik-username` is in `ARM_DASHBOARD_SSO_USERS` (or `X-authentik-groups` contains a group in
+  `ARM_DASHBOARD_SSO_GROUPS`), `/api/session` issues the normal session cookie + CSRF token, so every POST protection still applies.
+  The proxy must keep vouching for the same user on every request or the session is dropped. Logout leaves a "Sign in with SSO" button.
+  Token login remains as a fallback. Group membership is an exact match against the allowed groups; malformed or over-long segments in the
+  header are skipped (and logged once), not fatal.
+  **Deployment warning:** SSO trust is only as strong as "every proxy route to this backend carries the forward-auth middleware". A second
+  route without it lets clients forge the `X-authentik-*` headers through the trusted proxy address.
 * Preview with fake data: `python3 tools/dashboard_mock.py --port 8099` (token `demo`; `?scenario=attention|busy|down|clear`).
 * The daemon does not trust the dashboard: identity answers and approvals are command files that the daemon re-validates (regular
   file, owner, size, strict title/year rules, state check) before acting.

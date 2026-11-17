@@ -21,5 +21,14 @@ ARM_VERIFY_FULL_DECODE=0
 ARM_DASHBOARD_BIND=192.0.2.10
 ARM_DASHBOARD_PORT=8088
 ARM_DASHBOARD_ALLOWED_HOSTS=192.0.2.10,ripper,localhost,127.0.0.1
+# Optional single sign-on: trust the X-authentik-username / X-authentik-groups headers that the reverse proxy's forward-auth adds.
+# Off by default; the token login keeps working. Headers are believed ONLY from the exact proxy address(es) below (no CIDR),
+# so the proxy must be the sole thing that can reach this port as that address.
+# WARNING: SSO trust is only as strong as "every proxy route to this backend carries the forward-auth middleware"; a second route
+# without it lets clients forge the headers through the trusted proxy address. Needs ARM_DASHBOARD_SECURE_COOKIE=1 behind TLS.
+#ARM_DASHBOARD_SSO=1
+#ARM_DASHBOARD_TRUSTED_PROXY=192.0.2.2
+#ARM_DASHBOARD_SSO_USERS=admin-user
+#ARM_DASHBOARD_SSO_GROUPS=ripper-admins
 # Optional: link appended to Slack messages that need your action (approvals, identity requests, failures) ("Open dashboard"). Plain http(s) URL, no credentials/query; empty = no link.
 #ARM_DASHBOARD_URL=http://ripper.example.invalid:8088/

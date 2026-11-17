@@ -79,6 +79,10 @@ class Config:
     dashboard_allow_any_bind: bool = False       # needed to bind 0.0.0.0 / ::
     dashboard_allow_public: bool = False         # accept clients outside loopback/private/link-local ranges
     dashboard_allowed_clients: str = ""          # optional comma list of client IPs/CIDRs; when set ONLY these (+ loopback) may connect
+    dashboard_sso: bool = False                  # opt-in: trust the identity a reverse proxy asserts (Authentik forward-auth headers)
+    dashboard_trusted_proxy: str = ""            # comma list of EXACT proxy IPs (no CIDR) whose X-authentik-* headers are believed
+    dashboard_sso_users: str = ""                # comma list of SSO usernames allowed in
+    dashboard_sso_groups: str = ""               # comma list of SSO groups allowed in (any one matches)
     dashboard_port: int = 8088
     dashboard_secure_cookie: bool = False        # True when served behind HTTPS
 
@@ -125,6 +129,10 @@ class Config:
             dashboard_allow_any_bind=_b(e.get("ARM_DASHBOARD_ALLOW_ANY_BIND")),
             dashboard_allow_public=_b(e.get("ARM_DASHBOARD_ALLOW_PUBLIC")),
             dashboard_allowed_clients=g("ARM_DASHBOARD_ALLOWED_CLIENTS"),
+            dashboard_sso=_b(e.get("ARM_DASHBOARD_SSO")),
+            dashboard_trusted_proxy=g("ARM_DASHBOARD_TRUSTED_PROXY"),
+            dashboard_sso_users=g("ARM_DASHBOARD_SSO_USERS"),
+            dashboard_sso_groups=g("ARM_DASHBOARD_SSO_GROUPS"),
             dashboard_port=i("ARM_DASHBOARD_PORT", 8088),
             dashboard_secure_cookie=_b(e.get("ARM_DASHBOARD_SECURE_COOKIE")),
         )

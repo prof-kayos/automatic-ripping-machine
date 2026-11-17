@@ -9,9 +9,12 @@ import threading
 import time
 
 COOKIE_NAME = "arm_session"
+NOSSO_COOKIE = "arm_nosso"
+NOSSO_TTL = 8 * 3600
 MIN_TOKEN_LEN = 32
 SESSION_TTL = 12 * 3600
 MAX_SESSIONS = 20
+MAX_SSO_PER_USER = 3             # newest SSO sessions kept per user; older ones are retired on mint
 MAX_FAILURES = 5
 LOCKOUT_SECONDS = 60
 MAX_TRACKED_IPS = 1000
@@ -31,7 +34,7 @@ class Auth:
         self._fails = collections.OrderedDict()   # ip -> (count, locked_until), oldest first
         self._gfails = collections.deque()      # timestamps of recent failures, any client
         self._guntil = 0.0
-        self._sessions = {}     # sid -> (csrf, expires)
+        self._sessions = {}     # sid -> (csrf, expires, sso_user or None)
 
     # --- throttling
     def locked_seconds(self, ip: str) -> int:
@@ -84,8 +87,32 @@ class Auth:
                 del self._sessions[oldest]
             sid = secrets.token_urlsafe(32)
             csrf = secrets.token_urlsafe(32)
-            self._sessions[sid] = (csrf, now + SESSION_TTL)
+            self._sessions[sid] = (csrf, now + SESSION_TTL, None)
             return sid, csrf
+
+    def login_sso(self, user: str):
+        """Mint a normal session for a user the caller has ALREADY verified via a trusted proxy. Returns (sid, csrf)."""
+        now = self._clock()
+        with self._lock:
+            self._purge(now)
+            mine = sorted((k for k, v in self._sessions.items() if v[2] == user), key=lambda k: self._sessions[k][1])
+            for k in mine[:max(0, len(mine) - (MAX_SSO_PER_USER - 1))]:     # retire this user's own oldest first
+                del self._sessions[k]
+            while len(self._sessions) >= MAX_SESSIONS:
+                pool = [k for k, v in self._sessions.items() if v[2] == user] or list(self._sessions)   # own sessions first
+                del self._sessions[min(pool, key=lambda k: self._sessions[k][1])]
+            sid = secrets.token_urlsafe(32)
+            csrf = secrets.token_urlsafe(32)
+            self._sessions[sid] = (csrf, now + SESSION_TTL, user)
+            return sid, csrf
+
+    def session_user(self, sid):
+        """SSO username recorded on a valid session (None for token sessions or no session)."""
+        if self.session_csrf(sid) is None:
+            return None
+        with self._lock:
+            ent = self._sessions.get(sid)
+            return ent[2] if ent else None
 
     def _purge(self, now):
         for k in [k for k, v in self._sessions.items() if v[1] <= now]:
@@ -117,6 +144,15 @@ class Auth:
 
     def cookie_header(self, sid: str) -> str:
         c = f"{COOKIE_NAME}={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}"
+        return c + ("; Secure" if self.secure_cookie else "")
+
+    def nosso_cookie_header(self) -> str:
+        """Short-lived marker set at logout so an SSO session is not instantly re-minted."""
+        c = f"{NOSSO_COOKIE}=1; HttpOnly; SameSite=Strict; Path=/; Max-Age={NOSSO_TTL}"
+        return c + ("; Secure" if self.secure_cookie else "")
+
+    def clear_nosso_cookie_header(self) -> str:
+        c = f"{NOSSO_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
         return c + ("; Secure" if self.secure_cookie else "")
 
     def clear_cookie_header(self) -> str:
