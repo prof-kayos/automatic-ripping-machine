@@ -1,0 +1,15 @@
+# Non-secret settings for arm-pipeline (copy to /etc/arm-pipeline/arm-pipeline.conf). Secrets go in secrets.env.
+ARM_MOVIES_DIR=/mnt/movies
+ARM_SCRATCH_DIR=/scratch
+ARM_SR_DEV=/dev/sr0
+ARM_SG_DEV=/dev/sg1
+# media servers: URLs, and the movies path AS EACH SERVER SEES IT (can differ from ARM_MOVIES_DIR)
+JELLYFIN_URL=http://jellyfin.example.invalid:8096
+ARM_JELLYFIN_MOVIES_PATH=/mnt/nas/movies
+PLEX_URL=https://plex.example.invalid:32400
+PLEX_SECTION_ID=1
+ARM_PLEX_MOVIES_PATH=/mnt/nas/movies
+# a replacement always waits for approval unless this is 1 AND the folder matched exactly
+ARM_AUTO_REPLACE=0
+# 1 = also run the slow full decode on every rip (roughly realtime on a 4K HEVC title, so about as long as the rip; off by default, runs automatically on suspicion)
+ARM_VERIFY_FULL_DECODE=0

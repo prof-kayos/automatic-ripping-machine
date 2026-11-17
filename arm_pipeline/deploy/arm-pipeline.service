@@ -1,0 +1,34 @@
+[Unit]
+Description=ARM disc ripping pipeline (poll drive, rip, verify, place, notify, eject)
+After=network-online.target remote-fs.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# numeric ids: the uid that owns the media share mount (see docs); groups give access to the passed-through drive
+User=1000
+Group=1000
+SupplementaryGroups=cdrom video
+WorkingDirectory=/opt/arm
+Environment=PYTHONPATH=/opt/arm
+Environment=PYTHONUNBUFFERED=1
+Environment=TMPDIR=/scratch/tmp
+# secrets (mode 600, never in git) and non-secret settings; no `export`, quote values containing '#'
+EnvironmentFile=/etc/arm-pipeline/secrets.env
+EnvironmentFile=/etc/arm-pipeline/arm-pipeline.conf
+ExecStartPre=/usr/bin/mkdir -p /scratch/tmp
+ExecStart=/usr/bin/python3 -m arm_pipeline daemon
+Restart=on-failure
+RestartSec=30
+# SIGTERM makes a running rip terminate cleanly and the job is marked failed (never auto-resumed)
+KillMode=mixed
+TimeoutStopSec=90
+NoNewPrivileges=yes
+UMask=0022
+# Deliberately NOT using ProtectSystem/ProtectHome/PrivateTmp: mount namespacing can fail (status 226) in an
+# unprivileged container, and the daemon only needs the paths it is configured with.
+
+[Install]
+WantedBy=multi-user.target
