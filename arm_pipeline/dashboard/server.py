@@ -93,6 +93,28 @@ def _ip_allowed(ip: str) -> bool:
     return any(a in ipaddress.ip_network(n) for n in nets)
 
 
+def _ip_in_list(ip: str, spec: str) -> bool:
+    """True if `ip` is loopback or matches one of the comma-separated IPs/CIDRs in `spec` (bad entries are ignored)."""
+    try:
+        a = ipaddress.ip_address(ip.split("%")[0])
+    except ValueError:
+        return False
+    if isinstance(a, ipaddress.IPv6Address) and a.ipv4_mapped:
+        a = a.ipv4_mapped
+    if a.is_loopback:
+        return True
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            if a in ipaddress.ip_network(item, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -262,7 +284,11 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host", "")
         if not host or not _port_ok(host) or _bare_host(host) not in self.server.allowed_hosts:
             raise _HttpError(421, "unrecognised Host header")
-        if not self.server.cfg.dashboard_allow_public and not _ip_allowed(self._client_ip()):
+        spec = (getattr(self.server.cfg, "dashboard_allowed_clients", "") or "").strip()
+        if spec:      # an explicit client list wins: only those addresses (plus loopback) may connect
+            if not _ip_in_list(self._client_ip(), spec):
+                raise _HttpError(403, "client address not permitted")
+        elif not self.server.cfg.dashboard_allow_public and not _ip_allowed(self._client_ip()):
             raise _HttpError(403, "client address not permitted")
 
     def _sid(self):

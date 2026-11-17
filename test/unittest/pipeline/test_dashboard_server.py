@@ -293,6 +293,17 @@ class HostOriginTests(Base):
         for ip in ("8.8.8.8", "172.32.0.1", "2001:db8::1", "garbage", "::ffff:8.8.8.8"):
             self.assertFalse(srv._ip_allowed(ip), ip)
 
+    def test_explicit_client_list(self):
+        spec = "192.0.2.10, 198.51.100.0/24 ,not-an-ip,,"
+        for ip in ("127.0.0.1", "::1", "192.0.2.10", "198.51.100.7", "::ffff:192.0.2.10"):
+            self.assertTrue(srv._ip_in_list(ip, spec), ip)
+        for ip in ("192.0.2.11", "198.51.101.1", "10.200.0.1", "8.8.8.8", "garbage", "2001:db8::1"):
+            self.assertFalse(srv._ip_in_list(ip, spec), ip)
+        self.assertTrue(srv._ip_in_list("127.0.0.1", ""))          # loopback is always allowed (local health checks)
+        self.assertFalse(srv._ip_in_list("192.0.2.10", ""))        # an empty list allows nobody but loopback
+        self.assertEqual(Config.from_env({"ARM_DASHBOARD_ALLOWED_CLIENTS": "192.0.2.10"}).dashboard_allowed_clients,
+                         "192.0.2.10")
+
     def test_bind_policy(self):
         self.assertEqual(Config().dashboard_bind, "127.0.0.1")
         self.assertEqual(Config.from_env({}).dashboard_bind, "127.0.0.1")

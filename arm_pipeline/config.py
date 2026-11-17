@@ -55,6 +55,7 @@ class Config:
     dashboard_allowed_hosts: str = ""            # comma list of Host names; default 127.0.0.1, localhost, bind IP
     dashboard_allow_any_bind: bool = False       # needed to bind 0.0.0.0 / ::
     dashboard_allow_public: bool = False         # accept clients outside loopback/private/link-local ranges
+    dashboard_allowed_clients: str = ""          # optional comma list of client IPs/CIDRs; when set ONLY these (+ loopback) may connect
     dashboard_port: int = 8088
     dashboard_secure_cookie: bool = False        # True when served behind HTTPS
 
@@ -96,6 +97,7 @@ class Config:
             dashboard_allowed_hosts=g("ARM_DASHBOARD_ALLOWED_HOSTS"),
             dashboard_allow_any_bind=_b(e.get("ARM_DASHBOARD_ALLOW_ANY_BIND")),
             dashboard_allow_public=_b(e.get("ARM_DASHBOARD_ALLOW_PUBLIC")),
+            dashboard_allowed_clients=g("ARM_DASHBOARD_ALLOWED_CLIENTS"),
             dashboard_port=i("ARM_DASHBOARD_PORT", 8088),
             dashboard_secure_cookie=_b(e.get("ARM_DASHBOARD_SECURE_COOKIE")),
         )
