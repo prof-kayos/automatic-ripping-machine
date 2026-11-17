@@ -282,8 +282,9 @@ class Pipeline:
             return "skipped"
         if plan.action in (decision.ASK, decision.ASK_IDENTITY):
             self.ledger.set_state(fp, "awaiting_identity", why)
+            ident_cmd = cli("identify", fp, '"Title (Year)"')      # built outside the f-string: Python 3.10 (the CT) forbids a backslash inside {}
             self.slack.post(f":question: ARM needs a human for *{disc.name or fp}*: {why}. The disc stays in the drive. "
-                            f"Answer with `{cli('identify', fp, '\"Title (Year)\"')}` "
+                            f"Answer with `{ident_cmd}` "
                             f"or skip it with `{cli('skip', fp)}`.", needs_action=True)
             return "awaiting-identity"
         return self._rip_verify_stage(fp, disc, plan, name, identity)
