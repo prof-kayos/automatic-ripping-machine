@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest import mock
 
-from test_pipeline import HAVE_FFMPEG, PipelineBase  # noqa: E402  (same directory, shared fixtures)
+from test_pipeline import HAVE_FFMPEG, FakeTmdb, PipelineBase  # noqa: E402  (same directory, shared fixtures)
 from arm_pipeline import daemon, pipeline as pl, swap  # noqa: E402
 from arm_pipeline.errors import PipelineError  # noqa: E402
 from arm_pipeline.ledger import Record  # noqa: E402
@@ -247,3 +247,108 @@ class RegionalTitles(PipelineBase):
             with self.assertRaises(metadata.MetadataError):
                 t._get("/search/movie", {"query": "x"})
         self.assertTrue(seen and "language=en-US" in seen[0])
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg/ffprobe needed")
+class IntegrationHooks(PipelineBase):
+    """Events + live progress for the dashboard, and the daemon-side trust boundary for answers from outside."""
+
+    def test_every_slack_message_is_also_an_event_and_progress_is_cleared(self):
+        self.write_scan()
+        p = self.pipe()
+        self.assertEqual(p.handle_new_disc(), "done")
+        evs = p.events.tail(50)
+        self.assertTrue(any(e["kind"] == "slack" and "ADDED" in e["text"] for e in evs))
+        self.assertTrue(any(e["kind"] == "slack" and "disc detected" in e["text"] for e in evs))
+        self.assertTrue(all(e["fp"] == self.only_fp(p).fingerprint for e in evs if e["kind"] == "slack"))
+        self.assertIsNone(p.progress.read())                                           # nothing left over after a job
+
+    def test_rip_progress_is_published_while_ripping(self):
+        self.write_scan()
+        os.environ["FAKE_RIP_MODE"] = "slowprgv"
+        p = self.pipe()
+        out = {}
+        th = threading.Thread(target=lambda: out.update(r=p.handle_new_disc()))
+        th.start()
+        seen = None
+        for _ in range(60):                                                             # up to ~12 s
+            time.sleep(0.2)
+            seen = p.progress.read()
+            if seen and seen["phase"] == "ripping" and seen.get("percent"):
+                break
+        self.assertIsNotNone(seen)
+        self.assertEqual(seen["phase"], "ripping")
+        self.assertAlmostEqual(seen["percent"], 25.0, places=1)                         # 16384 / 65536 from the PRGV line
+        th.join(40)
+        self.assertEqual(out["r"], "done")
+        self.assertIsNone(p.progress.read())
+
+    def test_legacy_fingerprint_records_are_still_recognised(self):
+        from arm_policy import makemkv_scan
+        from arm_pipeline.ledger import legacy_fingerprint
+        self.write_scan()
+        with open(self.scanfile) as fh:
+            disc = makemkv_scan.parse_scan(fh.read())
+        old_id = legacy_fingerprint(disc.attrs.get(32, ""), disc.titles)
+        p = self.pipe()
+        p.ledger.put(Record(fingerprint=old_id, state="done", title="Test Movie"))
+        self.assertEqual(p.handle_new_disc(), "already-seen")                           # not re-ripped under the new id
+        self.assertEqual(self.drive.ejects, 1)
+
+    def test_reject_wins_when_both_answers_exist(self):
+        self.make_mkv(self.movie("Test Movie (2020)", "Test Movie (2020).mkv"))
+        old = self.movie("Test Movie (2020)", "Test Movie (2020).mkv")
+        before = os.path.getsize(old)
+        self.write_scan()
+        p = self.pipe()
+        p.handle_new_disc()
+        fp = self.only_fp(p).fingerprint
+        for kind in ("approve", "reject"):
+            open(os.path.join(self.cfg.state_path, kind, fp), "w").close()
+        p.poll_pending()
+        self.assertEqual(self.only_fp(p).state, "rejected")
+        self.assertEqual(os.path.getsize(old), before)
+
+    def _awaiting(self):
+        self.write_scan()
+        p = self.pipe(tmdb=FakeTmdb(identity=None))
+        self.assertEqual(p.handle_new_disc(), "awaiting-identity")
+        return p, self.only_fp(p)
+
+    def test_invalid_identity_answers_are_refused_and_the_disc_keeps_waiting(self):
+        import json
+        p, rec = self._awaiting()
+        path = os.path.join(self.cfg.state_path, "identify", rec.fingerprint + ".json")
+        bad = [{"title": "../../etc", "year": 2020}, {"title": "A/B", "year": 2020}, {"title": ".hidden", "year": 2020},
+               {"title": "ok", "year": 1500}, {"title": "ok", "year": "2020"}, {"title": "x" * 300, "year": 2020},
+               {"title": "tab\there", "year": 2020}, {"title": "CON:", "year": 2020}, {"year": 2020}, ["not", "a", "dict"]]
+        for ans in bad:
+            with open(path, "w") as fh:
+                json.dump(ans, fh)
+            self.assertIsNone(p.resume_identity(rec, True), ans)
+            self.assertFalse(os.path.exists(path))
+        self.assertEqual(self.only_fp(p).state, "awaiting_identity")
+        self.assertFalse(os.path.exists(self.movie("Test Movie (2020)")))
+        self.assertIn("invalid identity answer", self.slack.joined())
+
+    def test_symlinked_or_huge_answer_files_are_not_followed(self):
+        p, rec = self._awaiting()
+        path = os.path.join(self.cfg.state_path, "identify", rec.fingerprint + ".json")
+        target = os.path.join(self.tmp, "elsewhere.json")
+        with open(target, "w") as fh:
+            fh.write('{"title": "Test Movie", "year": 2020}')
+        os.symlink(target, path)
+        self.assertIsNone(p.resume_identity(rec, True))
+        self.assertEqual(self.only_fp(p).state, "awaiting_identity")
+        self.assertTrue(os.path.exists(target))                                        # the link target was not touched
+        with open(path, "w") as fh:
+            fh.write('{"title": "' + "a" * 5000 + '", "year": 2020}')
+        self.assertIsNone(p.resume_identity(rec, True))
+
+    def test_valid_identity_answer_still_resumes_and_records_an_event(self):
+        import json
+        p, rec = self._awaiting()
+        with open(os.path.join(self.cfg.state_path, "identify", rec.fingerprint + ".json"), "w") as fh:
+            json.dump({"title": "Test Movie", "year": 2020}, fh)
+        self.assertEqual(p.resume_identity(rec, True), "done")
+        self.assertTrue(any(e["kind"] == "operator" and "Test Movie (2020)" in e["text"] for e in p.events.tail(50)))

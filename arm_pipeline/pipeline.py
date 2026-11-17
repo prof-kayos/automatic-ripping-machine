@@ -13,6 +13,7 @@ Design rules (owner policy):
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import json
 import logging
 import os
@@ -21,14 +22,17 @@ import subprocess
 import re
 import threading
 import time
+import unicodedata
 
 from arm_policy import decision, library_match, makemkv_scan
 
 from . import drive as drive_mod
 from . import library, metadata, swap, transfer, verify
 from .errors import PipelineError, SwapError
-from .ledger import Ledger, Record, fingerprint
+from .events import EventLog
+from .ledger import Ledger, Record, fingerprint, legacy_fingerprint
 from .media_servers import Jellyfin, Plex, to_server_path
+from .progress import Progress, parse_prgv, prgv_percent
 from .slack import Notifier
 
 log = logging.getLogger("arm.pipeline")
@@ -49,11 +53,30 @@ def _fmt_dur(s: int) -> str:
     return f"{s // 3600}h{(s % 3600) // 60:02d}m"
 
 
+class _Tee:
+    """Wraps the notifier: every message posted to Slack is also written to the event log the dashboard reads."""
+
+    def __init__(self, inner, events, current_fp):
+        self._inner, self._events, self._current_fp = inner, events, current_fp
+
+    def post(self, text):
+        level = "error" if text.startswith(":x:") else "warning" if text.startswith(":warning:") else "info"
+        self._events.emit("slack", text, fp=self._current_fp(), level=level)
+        return self._inner.post(text)
+
+    def __getattr__(self, name):                 # ask_approval, poll_approval, ...
+        return getattr(self._inner, name)
+
+
 class Pipeline:
     CANARY_TIMEOUT_S = 10
+
     def __init__(self, cfg, notifier=None, plex=None, jelly=None, tmdb=None, ledger=None, drive=None):
         self.cfg = cfg
-        self.slack = notifier or Notifier(cfg)
+        self.events = EventLog(cfg.state_path)
+        self.progress = Progress(cfg.state_path)
+        self._current_fp = None
+        self.slack = _Tee(notifier or Notifier(cfg), self.events, lambda: self._current_fp)
         self.plex = plex or Plex(cfg)
         self.jelly = jelly or Jellyfin(cfg)
         self.tmdb = tmdb or metadata.Tmdb(cfg)
@@ -95,13 +118,19 @@ class Pipeline:
         self._canary_thread = None
         return box["ok"]
 
-    def _run_makemkv(self, args: list, log_path: str, timeout: int | None) -> int:
+    def _run_makemkv(self, args: list, log_path: str, timeout: int | None, on_tick=None) -> int:
         env = {k: v for k, v in os.environ.items() if not _SECRET.search(k)}   # MakeMKV needs none of our secrets
         with open(log_path, "wb") as fh:
             p = subprocess.Popen([self.cfg.makemkvcon, "-r", *args], stdout=fh, stderr=subprocess.STDOUT,
                                  stdin=subprocess.DEVNULL, env=env)
-            t0 = time.monotonic()
+            t0 = last_tick = time.monotonic()
             while p.poll() is None:
+                if on_tick and time.monotonic() - last_tick >= 5:
+                    last_tick = time.monotonic()
+                    try:
+                        on_tick()
+                    except Exception:                                   # noqa: BLE001 - progress must never break a rip
+                        log.exception("progress tick failed")
                 if self.stop_requested:
                     p.terminate()
                     try:
@@ -137,6 +166,7 @@ class Pipeline:
             ok, st = self.drive.eject(self.cfg)
             tail = f" Disc ejected." if ok else f" EJECT NOT CONFIRMED (tray {st}) - please check the drive."
         self.ledger.set_state(fp, state, message, **fields)
+        self.progress.clear(fp)
         self.slack.post(message + tail)
 
     # ------------------------------------------------------------------ entry points
@@ -175,9 +205,10 @@ class Pipeline:
             return "scan-failed"
         label = disc.attrs.get(32, "") or disc.name
         fp = fingerprint(label, disc.titles)
+        legacy = legacy_fingerprint(label, disc.titles)
         self._current_fp = fp
-        if not self.ledger.should_process(fp):
-            rec = self.ledger.get(fp)
+        if not self.ledger.should_process(fp, legacy_fp=legacy):
+            rec = self.ledger.get_any(fp, legacy)
             state = rec.state if rec else "?"
             tail = ""
             if state in ("done", "skipped", "failed", "rejected"):
@@ -280,7 +311,22 @@ class Pipeline:
                             f"{_fmt_bytes(title.size_bytes)}{' (extended cut)' if plan.is_extended else ''}.")
             t0 = time.time()
             log_path = os.path.join(outdir, "rip.log")
-            rc = self._run_makemkv(["--progress=-same", "mkv", "disc:0", str(title.index), outdir], log_path, None)
+            def rip_tick():
+                pct = None
+                try:
+                    with open(log_path, "rb") as fh:
+                        fh.seek(0, os.SEEK_END)
+                        fh.seek(max(0, fh.tell() - 4096))
+                        pct = prgv_percent(parse_prgv(fh.read().decode("utf-8", "replace")))
+                except OSError:
+                    pass
+                done = sum(os.path.getsize(os.path.join(outdir, f)) for f in os.listdir(outdir)
+                           if f.lower().endswith(".mkv"))
+                self.progress.update(fp, "ripping", done_bytes=done, total_bytes=title.size_bytes, percent=pct,
+                                     note=f"title {title.index}")
+            rip_tick()
+            rc = self._run_makemkv(["--progress=-same", "mkv", "disc:0", str(title.index), outdir], log_path, None,
+                                   on_tick=rip_tick)
             mkvs = sorted(f for f in os.listdir(outdir) if f.lower().endswith(".mkv"))
             if rc != 0 or len(mkvs) != 1:
                 raise PipelineError(f"rip failed (exit {rc}, {len(mkvs)} output files)", "rip")
@@ -289,6 +335,7 @@ class Pipeline:
 
             # verify (tiered, fast) and stage on the share concurrently: they use different resources
             self.ledger.set_state(fp, "verifying", "verifying and staging")
+            self.progress.update(fp, "verifying", note="quick checks + copy to the share")
             expect = verify.Expect(duration_s=title.duration_s, min_size_bytes=int(title.size_bytes * 0.5))
             res: dict = {}
 
@@ -303,7 +350,9 @@ class Pipeline:
                     folder = os.path.dirname(final)
                     if not os.path.isdir(folder):
                         os.mkdir(folder)                # the share root must exist; never create parents of parents
-                    size, digest = transfer.copy_with_hash(ripped, part)      # one read of the source...
+                    size, digest = transfer.copy_with_hash(
+                        ripped, part, progress=lambda done, total: self.progress.update(
+                            fp, "copying", done_bytes=done, total_bytes=total, note="copy to the share"))  # one read...
                     transfer.verify_readback(part, size, digest)              # ...and one read-back of the copy
                     res["size"], res["sha"] = size, digest
                 except Exception as e:                                  # noqa: BLE001
@@ -365,6 +414,7 @@ class Pipeline:
         if ticket is not None:
             paths["ticket"] = {"channel": ticket.channel, "ts": ticket.ts}
         self.ledger.set_state(fp, "awaiting_approval", "waiting for approval", paths=paths)
+        self.progress.clear(fp)
         ok, st = self.drive.eject(self.cfg)           # the data is safely off the disc: free the drive
         if not ok:
             self.slack.post(f":warning: ARM: eject not confirmed (tray {st}).")
@@ -383,10 +433,10 @@ class Pipeline:
     def _poll_approval(self, rec) -> None:
         fp = rec.fingerprint
         verdict = "pending"
-        if os.path.exists(self._state_file("approve", fp)):
-            verdict = "approved"
-        elif os.path.exists(self._state_file("reject", fp)):
+        if os.path.exists(self._state_file("reject", fp)):          # if both files exist, reject wins
             verdict = "rejected"
+        elif os.path.exists(self._state_file("approve", fp)):
+            verdict = "approved"
         elif rec.paths.get("ticket"):
             verdict = self.slack.poll_approval(metadata_ticket(rec.paths["ticket"]))
         if verdict == "pending":
@@ -509,18 +559,90 @@ class Pipeline:
     def resume_identity(self, rec, disc_present: bool) -> str | None:
         fp = rec.fingerprint
         path = self._state_file("identify", fp, ".json")
-        if not os.path.exists(path):
+        if not os.path.lexists(path):
             return None
         if not disc_present:
             return None
-        with open(path) as fh:
-            ans = json.load(fh)
+        try:
+            ans = _read_command_file(path)
+            title, year = _clean_identity(ans)
+        except PipelineError as e:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            self.slack.post(f":warning: ARM ignored an invalid identity answer for {fp}: {e}. "
+                            "The disc is still waiting for a valid one.")
+            return None
         os.remove(path)
         text = _read(self._state_file("scans", fp, ".txt"))
         disc = makemkv_scan.parse_scan(text)
-        ident = decision.Identity(title=ans["title"], year=ans.get("year"), confidence="high")
+        runtime, lang = None, None
+        tmdb_id = ans.get("tmdb_id") if isinstance(ans.get("tmdb_id"), int) else None
+        if tmdb_id and self.tmdb.configured:          # a TMDb pick brings runtime + language (better title gating)
+            try:
+                det = self.tmdb._get(f"/movie/{tmdb_id}", {}) or {}
+                runtime = det.get("runtime") or None
+                lang = det.get("original_language") or None
+            except Exception:                                          # noqa: BLE001 - optional enrichment
+                log.exception("TMDb detail lookup failed for the owner's pick")
+        ident = decision.Identity(title=title, year=year, runtime_min=runtime, original_language=lang,
+                                  tmdb_id=tmdb_id, confidence="high")
         self.ledger.set_state(fp, "scanning", f"identity set by owner: {ident.title} ({ident.year})")
+        self.events.emit("operator", f"identity set to {title} ({year})", fp=fp)
         return self._plan_and_run(fp, disc, identity_override=ident)
+
+
+_BAD_NAME_CHARS = set('/\\:*?"<>|')
+
+
+def _read_command_file(path: str) -> dict:
+    """Read a JSON command file written by another process: refuse symlinks/non-regular files/foreign owners/big files."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as e:
+        raise PipelineError(f"cannot open the answer file ({type(e).__name__})", "identity") from None
+    try:
+        st = os.fstat(fd)
+        import stat as _stat
+        if not _stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_size > 4096:
+            raise PipelineError("the answer file is not a small regular file owned by this user", "identity")
+        data = json.loads(os.read(fd, 4096).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        raise PipelineError("the answer file is not valid JSON", "identity") from None
+    finally:
+        os.close(fd)
+    if not isinstance(data, dict):
+        raise PipelineError("the answer file must be a JSON object", "identity")
+    return data
+
+
+def _clean_identity(ans: dict) -> tuple:
+    """The title becomes a LIBRARY FOLDER NAME, so this is the trust boundary: validate, never silently 'fix' -- with one
+    explicit normalisation (trailing dots/spaces are stripped, because a folder cannot end with them and a TMDb title such
+    as 'Say Anything...' must still be usable). The dashboard applies the same rules (operator.clean_title); a test keeps
+    the two in step."""
+    title = ans.get("title")
+    year = ans.get("year")
+    if not isinstance(title, str):
+        raise PipelineError("title must be text", "identity")
+    # categories first: encoding a lone surrogate would raise, so look at the characters before measuring bytes
+    for c in title:
+        cat = unicodedata.category(c)
+        if cat in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp") or (cat == "Zs" and c != " "):
+            raise PipelineError("title contains control, invisible or unusual whitespace characters", "identity")
+        if c in _BAD_NAME_CHARS:
+            raise PipelineError("title contains characters that cannot be in a folder name", "identity")
+    title = unicodedata.normalize("NFC", title).strip().rstrip(". ").strip()
+    if not title or len(title) > 200 or len(title.encode("utf-8")) > 255:
+        raise PipelineError("title is empty or too long", "identity")
+    if title.startswith("."):          # '/' and '\\' are already refused, so '..' cannot form a path component
+        raise PipelineError("title must not start with a dot", "identity")
+    if isinstance(year, bool) or not isinstance(year, int) or not (1888 <= year <= datetime.date.today().year + 1):
+        raise PipelineError("year must be a whole number between 1888 and next year", "identity")
+    if not library_match.canonical_folder(title, year):
+        raise PipelineError("title has no usable characters for a folder name", "identity")
+    return title, year
 
 
 def metadata_ticket(d: dict):

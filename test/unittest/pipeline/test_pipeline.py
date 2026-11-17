@@ -22,6 +22,7 @@ if [[ "$args" == *" info "* ]]; then cat "$FAKE_SCAN"; exit 0; fi
 if [[ "$args" == *" mkv "* ]]; then
   out="${@: -1}"; mkdir -p "$out"
   if [ "$FAKE_RIP_MODE" = slow ]; then sleep 30; fi
+  if [ "$FAKE_RIP_MODE" = slowprgv ]; then echo "PRGV:16384,16384,65536"; sleep 8; fi
   ffmpeg -v error -y -f lavfi -i testsrc=duration=12:size=640x360:rate=24 -f lavfi -i sine=duration=12 \
     -c:v libx264 -b:v 2M -c:a aac -shortest "$out/title_t00.mkv"
   if [ "$FAKE_RIP_MODE" = truncate ]; then truncate -s 300000 "$out/title_t00.mkv"; fi

@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 
 from arm_pipeline.config import Config
 from arm_pipeline.errors import MetadataError
-from arm_pipeline.metadata import Tmdb, parse_disc_name
+from arm_pipeline.metadata import Tmdb, parse_disc_name, joined_title_key
 
 KEY = "SECRETKEY123"
 
@@ -156,6 +156,47 @@ class TmdbTests(unittest.TestCase):
         with self.assertRaises(MetadataError) as cm:
             t.identify("Example Film", None, None)
         self.assertNotIn(KEY, str(cm.exception))
+
+    def test_joined_label_prefix_search_high(self):
+        self.load("say", movie(7, "Say Anything...", "1989-04-14", 100))
+        i = self.tmdb.identify("Sayanything", None, 100)
+        self.assertEqual((i.title, i.year, i.confidence), ("Say Anything...", 1989, "high"))
+        self.assertEqual(i.original_language, "en")
+        searches = [s for s in FakeTmdb.seen if s[0] == "/search/movie"]
+        details = [s for s in FakeTmdb.seen if s[0] != "/search/movie"]
+        self.assertLessEqual(len(searches), 8 + 4)      # normal variants + prefix budget
+        self.assertLessEqual(len([s for s in searches if len(s[1]["query"]) <= 8
+                                  and s[1]["query"] != "Sayanything"]), 8)
+        self.assertLessEqual(len(details), 12)
+
+    def test_joined_label_runtime_mismatch_not_high(self):
+        self.load("say", movie(7, "Say Anything...", "1989-04-14", 100))
+        i = self.tmdb.identify("Sayanything", None, 160)
+        self.assertTrue(i is None or i.confidence != "high")
+
+    def test_joined_label_no_match(self):
+        self.load("say", movie(7, "Say Anything...", "1989-04-14", 100))
+        self.assertIsNone(self.tmdb.identify("Qwertyuiop", None, 100))
+
+    def test_joined_label_leading_article(self):
+        self.load("mat", movie(9, "The Matrixish", "1999-03-31", 120))
+        i = self.tmdb.identify("Matrixish", None, 120)
+        self.assertEqual((i.tmdb_id, i.confidence), (9, "high"))
+
+    def test_joined_budget_and_short_token_skipped(self):
+        self.tmdb.identify("Abcdefghijklmnopqrstuvwxyz", None, 100)
+        self.assertLessEqual(len([s for s in FakeTmdb.seen if s[0] == "/search/movie"]), 4 + 8)
+        FakeTmdb.seen = []
+        self.assertIsNone(self.tmdb.identify("Abcdef", None, 100))
+        self.assertEqual(len([s for s in FakeTmdb.seen if len(s[1]["query"]) < 6]), 0)
+
+
+class JoinedKeyTests(unittest.TestCase):
+    def test_key(self):
+        self.assertEqual(joined_title_key("Say Anything..."), "sayanything")
+        self.assertEqual(joined_title_key("  Tron: Legacy! "), "tronlegacy")
+        self.assertEqual(joined_title_key(None), "")
+        self.assertEqual(joined_title_key("..."), "")
 
 
 class QueryVariantTests(unittest.TestCase):

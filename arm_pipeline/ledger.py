@@ -32,11 +32,30 @@ class Record:
     history: list = field(default_factory=list)   # [(ts, state, message)]
 
 
-def fingerprint(disc_label: str, titles: list) -> str:
-    """Stable id for a disc: label + sorted (duration_s, size_bytes) of titles >= 120s."""
+def legacy_fingerprint(disc_label: str, titles: list) -> str:
+    """The ORIGINAL id: label + sorted (duration_s, size_bytes) of every title >= 120s.
+
+    Unstable in practice (MakeMKV's scan of extras varies between runs), kept only so records created under it
+    are still recognised."""
     items = sorted((int(t.duration_s), int(t.size_bytes)) for t in titles
                    if int(t.duration_s) >= MIN_TITLE_SECONDS)
     payload = json.dumps([disc_label or '', items], separators=(',', ':'), ensure_ascii=True)
+    return hashlib.sha256(payload.encode('ascii')).hexdigest()[:16]
+
+
+def fingerprint(disc_label: str, titles: list) -> str:
+    """Stable id for a disc: the volume label plus duration and size of the LARGEST title (by size_bytes; ties:
+    longest duration), considering only titles >= 120s.
+
+    Why not every title: scanning the same physical disc twice can report a different set of extras (13 titles
+    then 18 on a real disc) while the main feature is identical, so hashing all titles gave one disc two ids."""
+    main = None
+    for t in titles:
+        d, sz = int(t.duration_s), int(t.size_bytes)
+        if d >= MIN_TITLE_SECONDS and (main is None or (sz, d) > (main[1], main[0])):
+            main = (d, sz)
+    payload = json.dumps([disc_label or '', list(main) if main else []],
+                         separators=(',', ':'), ensure_ascii=True)
     return hashlib.sha256(payload.encode('ascii')).hexdigest()[:16]
 
 
@@ -134,8 +153,19 @@ class Ledger:
     def active(self) -> list:
         return [r for r in self.all() if r.state in ACTIVE_STATES]
 
-    def should_process(self, fp) -> bool:
-        return not os.path.exists(self._path(fp))
+    def get_any(self, fp, legacy_fp=None):
+        """Record under the current id, else under the legacy id (if given), else None."""
+        rec = self.get(fp)
+        if rec is None and legacy_fp and legacy_fp != fp:
+            rec = self.get(legacy_fp)
+        return rec
+
+    def should_process(self, fp, legacy_fp: str | None = None) -> bool:
+        if os.path.exists(self._path(fp)):
+            return False
+        if legacy_fp and legacy_fp != fp and os.path.exists(self._path(legacy_fp)):
+            return False
+        return True
 
     def retry(self, fp) -> None:
         rec = self.get(fp)

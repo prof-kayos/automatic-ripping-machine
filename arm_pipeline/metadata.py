@@ -106,6 +106,27 @@ def query_variants(title: str) -> list:
     return out
 
 
+MAX_PREFIX_SEARCHES = 8
+MAX_PREFIX_DETAILS = 12
+_JOIN_MIN_LETTERS = 7
+
+
+def joined_title_key(title) -> str:
+    """Lower-cased title with every non-alphanumeric character removed ('Say Anything...' -> 'sayanything')."""
+    return "".join(ch for ch in str(title or "").lower() if ch.isalnum())
+
+
+def _joined_keys(title) -> set:
+    """joined_title_key plus the same key after dropping a leading 'the'/'a' word."""
+    t = str(title or "").strip()
+    keys = {joined_title_key(t)}
+    m = re.match(r"^(?:the|a)\W+(.+)$", t, re.I)
+    if m:
+        keys.add(joined_title_key(m.group(1)))
+    keys.discard("")
+    return keys
+
+
 class Tmdb:
     def __init__(self, cfg, api_base: str = "https://api.themoviedb.org/3"):
         self._key = getattr(cfg, "tmdb_api_key", "") or ""
@@ -161,25 +182,73 @@ class Tmdb:
             if c:
                 cands.append(c)
         if not cands:
+            cands = self._identify_joined(title, main_runtime_min)
+        if not cands:
             return None
         best = _pick(cands, main_runtime_min)
         others = [c["score"] for c in cands if c is not best]
         margin = best["score"] - max(others) if others else None
         confident = best["year"] is not None and (margin is None or margin >= 2)
+        if confident and best.get("joined") and main_runtime_min and best["runtime"] \
+                and abs(best["runtime"] - main_runtime_min) > 25:
+            confident = False       # a squashed-label match needs a consistent runtime to be trusted
         return Identity(title=best["title"], year=best["year"], runtime_min=best["runtime"] or None,
                         original_language=best["lang"], tmdb_id=best["id"],
                         confidence="high" if confident else "low")
 
 
-def _candidate(det: dict, res: dict, want: list, year, main_rt) -> dict | None:
+    def _identify_joined(self, title: str, main_rt) -> list:
+        """Fallback for a label with no separators ('SAYANYTHING'): search TMDb by short prefixes of the token and
+        keep results whose title, with all punctuation/spaces removed, equals the token. Bounded call budget."""
+        token = (title or "").strip()
+        if not token.isalpha() or len(token) < _JOIN_MIN_LETTERS:
+            return []
+        key = joined_title_key(token)
+        found, seen_ids, last_err, ok = [], set(), None, False
+        lengths = list(range(3, min(8, len(key) - 3) + 1))[:MAX_PREFIX_SEARCHES]
+        for n in lengths:
+            try:
+                results = self._search(key[:n], None)
+            except MetadataError as e:
+                last_err = e
+                continue
+            ok = True
+            for r in results:
+                rid = int(r["id"])
+                if rid in seen_ids:
+                    continue
+                names = (str(r.get("title") or ""), str(r.get("original_title") or ""))
+                if any(key in _joined_keys(nm) for nm in names):
+                    seen_ids.add(rid)
+                    found.append(r)
+        if not ok and last_err is not None:
+            raise last_err
+        cands = []
+        for r in found[:MAX_PREFIX_DETAILS]:
+            try:
+                det = self._get(f"/movie/{int(r['id'])}", {})
+            except MetadataError:
+                continue
+            if det is None:
+                continue
+            c = _candidate(det, r, [], None, main_rt, joined_key=key)
+            if c:
+                cands.append(c)
+        return cands
+
+
+def _candidate(det: dict, res: dict, want: list, year, main_rt, joined_key: str = "") -> dict | None:
     """Score one TMDb movie against what we know; None if the title is not plausibly the same."""
     ctitle = str(det.get("title") or res.get("title") or "")
     names = [ctitle, str(det.get("original_title") or res.get("original_title") or "")]
     sim = max(difflib.SequenceMatcher(None, " ".join(want), " ".join(library_match.tokens(n))).ratio()
               for n in names if n) if any(names) else 0.0
-    if sim < MIN_SIMILARITY:
+    joined = bool(joined_key) and any(joined_key in _joined_keys(n) for n in names if n)
+    if joined_key and not joined:
         return None
-    score = 4 if sim >= 0.99 else 2 if sim >= 0.85 else 0
+    if sim < MIN_SIMILARITY and not joined:
+        return None
+    score = 4 if (sim >= 0.99 or joined) else 2 if sim >= 0.85 else 0
     m = re.match(r"^(\d{4})", str(det.get("release_date") or res.get("release_date") or ""))
     cyear = int(m.group(1)) if m else None
     if year and cyear:
@@ -193,7 +262,7 @@ def _candidate(det: dict, res: dict, want: list, year, main_rt) -> dict | None:
         score += 3 if diff <= 5 else 1 if diff <= 15 else -3 if diff > 30 else 0
     return {"id": det.get("id", res.get("id")), "title": ctitle, "year": cyear, "runtime": runtime,
             "lang": det.get("original_language") or res.get("original_language") or None,
-            "score": score, "norm": " ".join(library_match.tokens(ctitle))}
+            "score": score, "joined": joined, "norm": " ".join(library_match.tokens(ctitle))}
 
 
 def _pick(cands: list, main_rt) -> dict:

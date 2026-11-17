@@ -87,6 +87,7 @@ def run(cfg, pipe: Pipeline | None = None, stop=None, sleep=time.sleep) -> None:
     signal.signal(signal.SIGINT, on_signal)
     recover_interrupted(pipe)
     cleanup_scratch(pipe)
+    pipe.events.emit("daemon", "pipeline started")
     pipe.slack.post(":robot_face: ARM pipeline started.")
     prev_present, share_alerted, drive_alerted = False, False, False
     while not (running["stop"] or stop()):
@@ -120,4 +121,5 @@ def run(cfg, pipe: Pipeline | None = None, stop=None, sleep=time.sleep) -> None:
         except Exception:                                # noqa: BLE001 - the loop must survive anything
             log.exception("poll cycle failed")
         sleep(cfg.poll_seconds)
+    pipe.events.emit("daemon", "pipeline stopping")
     pipe.slack.post(":stop_sign: ARM pipeline stopping.")

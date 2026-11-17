@@ -130,9 +130,13 @@ class VerifyRipTests(unittest.TestCase):
     def test_corrupted_middle_fails(self):
         p = self._copy("corrupt.mkv")
         rnd = random.Random(1234)
+        # The fixture is encoded with multi-threaded x264, so its bytes (and where index/metadata sit) differ from run to
+        # run: a single block at the midpoint can land on a non-essential part of the container and decode cleanly
+        # (seen once on the target machine). Damage three spots inside the media data so the test cannot be flaky.
         with open(p, "r+b") as f:
-            f.seek(self.size // 2)
-            f.write(bytes(rnd.getrandbits(8) for _ in range(4096)))
+            for frac in (0.3, 0.5, 0.7):
+                f.seek(int(self.size * frac))
+                f.write(bytes(rnd.getrandbits(8) for _ in range(4096)))
         cfg = Config(sample_windows=4, sample_seconds=3, verify_full_decode=True)  # deterministic
         r = verify_rip(p, self.expect, cfg)
         self.assertFalse(r.ok, r.summary())
