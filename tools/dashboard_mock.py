@@ -5,7 +5,7 @@
 
 Open http://127.0.0.1:8099/?scenario=busy to switch scenario (remembered in a
 cookie).  Scenarios: attention, busy, clear, down.  Login token: "demo".
-Binds to loopback only; never use it for anything but UI development.
+DASHBOARD_MOCK_NOAUTH=1 skips login.  Binds to loopback only; never use it for anything but UI development.
 """
 import argparse
 import json

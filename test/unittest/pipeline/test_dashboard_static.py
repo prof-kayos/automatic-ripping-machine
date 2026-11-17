@@ -61,6 +61,14 @@ class TestHtml(unittest.TestCase):
             txt = txt.replace("http://www.w3.org/2000/svg", "")
             self.assertNotRegex(txt, r"https?://", name)
 
+    def test_theme_assets_original_and_whitelisted(self):
+        allowed = {"index.html", "app.js", "style.css", "favicon.svg", "favicon.ico", "icon.svg", "manifest.webmanifest"}
+        for f in STATIC.iterdir():
+            self.assertIn(f.name, allowed)
+            self.assertNotIn("blockbuster", f.read_text().lower(), f.name)
+        self.assertIn("Be kind - rewind.", self.html)
+        self.assertIn("<footer", self.html)
+
     def test_landmarks(self):
         for needle in ("<header", "<main", 'lang="en"'):
             self.assertIn(needle, self.html)
@@ -138,6 +146,10 @@ class TestNode(unittest.TestCase):
                           "m.stateLevel('failed'),m.stateLevel('awaiting_identity'),m.stateLevel('done')]")
         self.assertEqual(out, [["critical", "warning", "info"], "SAY ANYTHING 1989", 1989, None, 5999, True, False,
                                "bad", "warn", "ok"])
+
+    def test_stickers(self):
+        out = self.run_js("[m.stickerText('done'),m.stickerText('awaiting_identity'),m.stickerText('failed'),m.stickerText('ripping')]")
+        self.assertEqual(out, ["NEW RELEASE", "DUE", "LATE", "NOW PLAYING"])
 
     def test_backoff(self):
         out = self.run_js("[m.backoffDelay(4000,0),m.backoffDelay(4000,2),m.backoffDelay(4000,20)]")

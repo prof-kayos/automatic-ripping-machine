@@ -72,6 +72,9 @@ function prettyLabel(label) {
   return String(label || '').replace(/[_.]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+const STICKER = { ok: 'NEW RELEASE', warn: 'DUE', bad: 'LATE', run: 'NOW PLAYING', off: 'ON FILE' };
+function stickerText(state) { return STICKER[stateLevel(state)]; }
+
 function stateLevel(state) {
   const s = String(state || '').toLowerCase();
   if (/fail|error|reject|stuck/.test(s)) return 'bad';
@@ -99,7 +102,7 @@ function backoffDelay(base, fails, cap = 60000) {
 
 if (typeof module !== 'undefined') {
   module.exports = { fmtDuration, fmtMinSec, relTime, fmtAge, fmtRate, fmtGb, fmtPct, clampPct, sortIssues,
-    longestTitle, prettyLabel, stateLevel, parseYear, matchesRuntime, eventKey, backoffDelay };
+    longestTitle, prettyLabel, stateLevel, stickerText, parseYear, matchesRuntime, eventKey, backoffDelay };
 }
 
 /* ---------- browser app ---------- */
@@ -248,6 +251,7 @@ $('logout').addEventListener('click', async () => {
 /* ---------- theme ---------- */
 function applyTheme(t) { if (t) document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme'); }
 try { applyTheme(localStorage.getItem('arm-theme')); } catch (_) { /* storage unavailable */ }
+try { const tq = new URLSearchParams(location.search).get('theme'); if (tq === 'dark' || tq === 'light') applyTheme(tq); } catch (_) { /* ignore */ }
 $('theme').addEventListener('click', () => {
   const cur = document.documentElement.getAttribute('data-theme')
     || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -303,14 +307,16 @@ function renderNow(s) {
   const pct = clampPct(c.percent);
   const bar = h('div', { class: 'bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(pct)), 'aria-label': 'Progress' }, h('span'));
   bar.firstChild.style.width = pct + '%';
+  const reel = () => h('span', { class: 'reel', 'aria-hidden': 'true' });
+  const ctr = (label, value) => h('div', { class: 'counter' }, h('span', { class: 'c-label', text: label }), h('span', { class: 'c-val', text: value }));
   box.append(
     h('div', { class: 'now-title', text: c.title || 'Unknown title' }),
-    h('div', { class: 'muted', text: 'Phase: ' + (c.phase || c.state || '–') + ' · ' + fmtPct(c.percent) }),
-    bar,
-    h('div', { class: 'now-meta num' },
-      h('span', {}, 'Rate ', h('b', { text: fmtRate(c.rate_mbps) })),
-      h('span', {}, 'ETA ', h('b', { text: c.eta_s == null ? '–' : fmtDuration(c.eta_s) })),
-      h('span', {}, h('b', { text: fmtGb(c.done_gb) }), ' / ', h('b', { text: fmtGb(c.total_gb) }), ' GB')));
+    h('div', { class: 'now-phase', text: 'Phase: ' + (c.phase || c.state || '–') }),
+    h('div', { class: 'deck' + (c.stale ? '' : ' live') }, reel(), bar, reel()),
+    h('div', { class: 'counters num' },
+      ctr('Done', fmtPct(c.percent)), ctr('Rate', fmtRate(c.rate_mbps)),
+      ctr('Time left', c.eta_s == null ? '–' : fmtDuration(c.eta_s)),
+      ctr('Progress', fmtGb(c.done_gb) + ' / ' + fmtGb(c.total_gb) + ' GB')));
   if (c.stale) box.append(h('div', { class: 'stale', role: 'status', text: 'Warning: progress has not updated recently. The process may be stuck.' }));
 }
 
@@ -514,6 +520,9 @@ function refreshTimes() {
 }
 
 /* ---------- jobs / history ---------- */
+function badge(state) {
+  return h('span', { class: 'badge ' + stateLevel(state) }, h('b', { text: stickerText(state) }), h('small', { text: String(state || '–').replace(/_/g, ' ') }));
+}
 function renderJobs(list) {
   const body = clear($('jobs-body'));
   $('jobs-empty').classList.toggle('hidden', list.length > 0);
@@ -522,7 +531,7 @@ function renderJobs(list) {
     const open = () => openDetail(j.fp);
     const tr = h('tr', { onclick: (e) => { if (!e.target.closest('button')) open(); } },
       h('td', { class: 'c-title', 'data-label': 'Title' }, h('button', { type: 'button', class: 'rowbtn', text: j.title || j.label || j.fp, onclick: open })),
-      h('td', { 'data-label': 'State' }, h('span', { class: 'badge ' + stateLevel(j.state), text: String(j.state || '–').replace(/_/g, ' ') })),
+      h('td', { 'data-label': 'State' }, badge(j.state)),
       h('td', { 'data-label': 'Action', text: j.action || '–' }),
       h('td', { 'data-label': 'Age', class: 'num', text: j.age_s == null ? '–' : fmtAge(j.age_s) }),
       h('td', { 'data-label': 'Message', text: j.message || '' }));
@@ -538,7 +547,7 @@ async function openDetail(fp) {
   catch (e) { clear(shell).append(drawerHead('Job detail'), h('p', { class: 'form-error', text: e.message })); return; }
   clear(shell);
   shell.append(drawerHead(d.title || d.label || fp));
-  shell.append(h('p', {}, h('span', { class: 'badge ' + stateLevel(d.state), text: String(d.state || '').replace(/_/g, ' ') }), ' ', d.message || ''));
+  shell.append(h('p', {}, badge(d.state), ' ', d.message || ''));
   const kv = h('dl', { class: 'kv' });
   const add = (k, v) => { if (v) kv.append(h('dt', { text: k }), h('dd', { text: String(v) })); };
   add('Label', d.label); add('Identity', d.identity && (typeof d.identity === 'string' ? d.identity : JSON.stringify(d.identity)));
