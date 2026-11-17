@@ -598,7 +598,7 @@ class Pipeline:
         return self._plan_and_run(fp, disc, identity_override=ident)
 
 
-_BAD_NAME_CHARS = set('/\\:*?"<>|')
+_BAD_NAME_CHARS = set('/\\')   # path separators only; ':' etc. are real title characters (TMDb 'Mission: Impossible'), dropped from the folder by canonical_folder
 
 
 def _read_command_file(path: str) -> dict:

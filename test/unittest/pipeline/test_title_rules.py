@@ -24,12 +24,13 @@ ACCEPT = {
     "Who Framed Roger Rabbit.": "Who Framed Roger Rabbit",
     "Amélie": "Amélie",
     "Se7en": "Se7en",
-    "Tron: Legacy".replace(":", ""): "Tron Legacy",
+    "Tron: Legacy": "Tron: Legacy",              # TMDb spelling kept as the title; the FOLDER becomes "Tron - Legacy (year)"
+    "Who? Me*": "Who? Me*",
     "The Lord of the Rings (Extended)": "The Lord of the Rings (Extended)",
     "Café": "Café",                  # NFD input is normalised to NFC
 }
 REJECT = [
-    "", "   ", "...", " . ", ".hidden", "..hidden", "../../etc", "A/B", "A\\B", "A:B", "A*B", "A?B", 'A"B', "A<B", "A>B", "A|B",
+    "", "   ", "...", " . ", ".hidden", "..hidden", "../../etc", "A/B", "A\\B",
     "tab\there", "new\nline", "nul\x00byte", "del\x7fchar", "c1\x85char",
     "Foo‮gpj.exe", "Foo⁦bar", "zero​width", "bom﻿x", "nb sp", "ideo　space", "line sep",
     "\ud800", "\udfff", "privuse", "x" * 201, "é" * 130,

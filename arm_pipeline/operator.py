@@ -98,7 +98,7 @@ def reject(cfg, led, fp) -> dict:
     return _signal(cfg, led, fp, "reject")
 
 
-_BAD_TITLE_CHARS = set('/\\:*?"<>|')
+_BAD_TITLE_CHARS = set('/\\')   # path separators only; ':' '?' etc. are real title characters, dropped from the FOLDER by canonical_folder
 _BAD_CATEGORIES = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")
 _YEAR_MSG = "year must be a number between 1888 and next year"
 
@@ -116,7 +116,7 @@ def clean_title(title) -> str:
 
     Rules: text only; NFC-normalised; no control/format/private/unassigned/surrogate/line-separator
     characters (bidi overrides, zero-width characters, BOM ...); no whitespace other than the plain
-    ASCII space; none of / \\ : * ? " < > |; must not start with a dot; at most 200 characters and
+    ASCII space; no / or \\ (other punctuation such as : ? * is a real title character and is replaced in the FOLDER name by canonical_folder: ':' '/' '|' become ' - ', ? * " < > are dropped); must not start with a dot; at most 200 characters and
     255 UTF-8 bytes. Leading/trailing spaces and trailing dots are then stripped explicitly, except a closing
     ellipsis glued to a word ("Say Anything..." is kept, giving the folder "Say Anything... (1989)"). The result
     must be non-empty and must yield a non-empty library folder name.

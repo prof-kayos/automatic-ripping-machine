@@ -85,7 +85,7 @@ class OperatorTests(unittest.TestCase):
     def test_identify_title_table(self):
         self.put("awaiting_identity")
         nextyear = time.gmtime().tm_year + 1
-        bad = ["", "   ", "...", "a/b", "a\\b", "a:b", "a*b", "a?b", 'a"b', "a<b", "a>b", "a|b", "a\x00b",
+        bad = ["", "   ", "...", "a/b", "a\\b", "a\x00b",
                "a\x07b", "a\nb", ".hidden", "..", "x" * 201, "é" * 150, "a b", 5, None]
         for t in bad:
             self.assertFalse(ops.identify(self.cfg, self.led, FP, t, 2000)["ok"], repr(t))
@@ -137,7 +137,7 @@ class OperatorTests(unittest.TestCase):
         self.assertEqual(ops.clean_title("  Heat . "), "Heat")
         self.assertEqual(ops.clean_title("Cafe\u0301"), "Caf\u00e9")
         self.assertEqual(ops.clean_title("Mr. Smith"), "Mr. Smith")
-        for bad in ("", "..", "\ud800", "a\u202eb", "a\u00a0b", ".x", "a:b", "x" * 201, 7):
+        for bad in ("", "..", "\ud800", "a\u202eb", "a\u00a0b", ".x", "x" * 201, 7):
             with self.assertRaises(ValueError, msg=repr(bad)):
                 ops.clean_title(bad)
         r = None

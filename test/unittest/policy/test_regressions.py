@@ -209,5 +209,14 @@ class ExactBeatsFuzzyTests(unittest.TestCase):
                                       "Harry Potter and the Sorcerers Stone (2001)"])
         self.assertEqual(m.status, "ambiguous")              # no exact folder: a human decides
 
+
+class ColonTitleFolder(unittest.TestCase):
+    def test_tmdb_colon_titles_become_dash_folders(self):
+        from arm_policy import library_match as lm
+        self.assertEqual(lm.canonical_folder("Mission: Impossible", 1996), "Mission - Impossible (1996)")
+        self.assertEqual(lm.canonical_folder("Dogma: What? Ever*", 1999), "Dogma - What Ever (1999)")
+        self.assertEqual(lm.canonical_folder("AC/DC: Live", 1991), "AC - DC - Live (1991)")
+
+
 if __name__ == "__main__":
     unittest.main()

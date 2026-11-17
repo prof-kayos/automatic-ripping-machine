@@ -179,12 +179,14 @@ def trim_title_tail(title: str) -> str:
 
 
 def canonical_folder(title, year) -> str:
-    """'Who Framed: Roger? Rabbit.' -> 'Who Framed Roger Rabbit (1988)'. Returns '' if no usable title.
+    """'Who Framed: Roger? Rabbit.' -> 'Who Framed - Roger Rabbit (1988)'. Returns '' if no usable title.
     With a year, a closing ellipsis survives ('Say Anything...' -> 'Say Anything... (1989)'); without a year the
     folder would END in the dots (Windows/SMB cannot), so they are dropped."""
     if not isinstance(title, str):
         return ""
-    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", title)
+    safe = re.sub(r'\s*[:/\\|]+\s*', " - ", title)      # separators become ' - ' ('Mission: Impossible' -> 'Mission - Impossible')
+    safe = re.sub(r'[<>"?*\x00-\x1f]', "", safe)         # the rest are dropped
+    safe = re.sub(r"^(?: - )+|(?: - )+$", "", re.sub(r"\s+", " ", safe).strip()) if re.search(r"\w", safe) else safe
     y = _coerce_year(year)
     safe = trim_title_tail(safe) if y else safe.strip().rstrip(". ")
     if not re.search(r"\w", safe):

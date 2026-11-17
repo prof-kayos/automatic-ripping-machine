@@ -128,7 +128,7 @@ class TestLibraryMatch(unittest.TestCase):
         self.assertEqual(lm.video_files(["a.mkv", "poster.jpg", ".hidden.mkv", "a-trailer.mkv", "x.nfo"]), ["a.mkv"])
 
     def test_canonical_folder_strips_bad_chars_and_trailing_dot(self):
-        self.assertEqual(lm.canonical_folder('Who Framed: Roger? Rabbit.', 1988), "Who Framed Roger Rabbit (1988)")
+        self.assertEqual(lm.canonical_folder('Who Framed: Roger? Rabbit.', 1988), "Who Framed - Roger Rabbit (1988)")
 
     def test_canonical_folder_keeps_closing_ellipsis_only_with_a_year(self):
         self.assertEqual(lm.canonical_folder("Say Anything...", 1989), "Say Anything... (1989)")

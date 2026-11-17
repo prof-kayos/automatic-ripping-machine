@@ -321,7 +321,7 @@ class IntegrationHooks(PipelineBase):
         path = os.path.join(self.cfg.state_path, "identify", rec.fingerprint + ".json")
         bad = [{"title": "../../etc", "year": 2020}, {"title": "A/B", "year": 2020}, {"title": ".hidden", "year": 2020},
                {"title": "ok", "year": 1500}, {"title": "ok", "year": "2020"}, {"title": "x" * 300, "year": 2020},
-               {"title": "tab\there", "year": 2020}, {"title": "CON:", "year": 2020}, {"year": 2020}, ["not", "a", "dict"]]
+               {"title": "tab\there", "year": 2020}, {"title": ":", "year": 2020}, {"year": 2020}, ["not", "a", "dict"]]
         for ans in bad:
             with open(path, "w") as fh:
                 json.dump(ans, fh)
