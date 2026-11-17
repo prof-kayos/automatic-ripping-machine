@@ -258,6 +258,19 @@ class PipelineE2E(PipelineBase):
         self.assertEqual(p.resume_identity(rec, True), "done")
         self.assertTrue(os.path.exists(self.movie("Test Movie (2020)", "Test Movie (2020).mkv")))
 
+    def test_owner_answer_with_ellipsis_title_files_under_dotted_folder(self):
+        """SAYANYTHING: separator-less label, TMDb finds nothing; the owner types 'Say Anything...' + 1989."""
+        self.write_scan()
+        p = self.pipe(tmdb=FakeTmdb(identity=None))
+        self.assertEqual(p.handle_new_disc(), "awaiting-identity")
+        rec = self.only_fp(p)
+        from arm_pipeline import operator as ops
+        r = ops.identify(self.cfg, p.ledger, rec.fingerprint, "Say Anything...", 1989)     # what the dashboard does
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(p.resume_identity(rec, True), "done")
+        self.assertTrue(os.path.exists(self.movie("Say Anything... (1989)", "Say Anything... (1989).mkv")))
+        self.assertEqual(self.only_fp(p).state, "done")
+
     def test_share_canary_missing_blocks_processing(self):
         os.remove(os.path.join(self.cfg.movies_dir, ".arm-canary"))
         self.write_scan()

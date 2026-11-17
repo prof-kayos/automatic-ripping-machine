@@ -111,6 +111,17 @@ class TmdbTests(unittest.TestCase):
         self.assertEqual(i.tmdb_id, 1)
         self.assertEqual(len([s for s in FakeTmdb.seen if s[0] == "/search/movie"]), 2)
 
+    def test_single_weak_title_match_is_low_unless_runtime_agrees(self):
+        """Regression: one fuzzy candidate with no rival has margin None and used to count as confident, so a wrong film
+        ('Anything Goes' for the label SAYANYTHING) was ripped with no human gate."""
+        self.load("Sayanything", movie(1, "Anything Goes", "1956-01-01", 106))
+        i = self.tmdb.identify("Sayanything", None, 100)
+        self.assertEqual(i.confidence, "low")
+        i = self.tmdb.identify("Sayanything", None, 106)        # a runtime agreeing within 5 minutes vouches for it
+        self.assertEqual(i.confidence, "high")
+        self.load("Sayanything", movie(1, "Anything Goes", "1956-01-01", 106))
+        self.assertEqual(self.tmdb.identify("Sayanything", None, None).confidence, "low")
+
     def test_ambiguous_is_low(self):
         self.load("Sample Story", movie(1, "Sample Story", "1960-01-01", 100),
                   movie(2, "Sample Story", "1990-01-01", 100))

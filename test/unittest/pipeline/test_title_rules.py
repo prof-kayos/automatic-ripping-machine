@@ -14,8 +14,14 @@ from arm_pipeline.errors import PipelineError  # noqa: E402
 YEAR = 1989
 ACCEPT = {
     "Say Anything": "Say Anything",
-    "Say Anything...": "Say Anything",          # trailing dots stripped, explicitly
-    "  Say Anything . ": "Say Anything",
+    "Say Anything...": "Say Anything...",       # a closing ellipsis is the real (TMDb/Plex) spelling: kept
+    "Say Anything": "Say Anything",
+    "  Say Anything . ": "Say Anything",        # any other trailing dot/space run is stripped
+    "Say Anything. . .": "Say Anything",
+    "Say Anything....": "Say Anything",
+    "Say Anything..": "Say Anything",
+    "Mr.": "Mr",
+    "Who Framed Roger Rabbit.": "Who Framed Roger Rabbit",
     "Amélie": "Amélie",
     "Se7en": "Se7en",
     "Tron: Legacy".replace(":", ""): "Tron Legacy",
@@ -64,7 +70,8 @@ class TitleRuleDrift(unittest.TestCase):
             self.assertNotIn("/", folder)
             self.assertNotIn("\\", folder)
             self.assertFalse(folder.startswith("."))
-            self.assertNotIn("..", folder)
+            self.assertNotIn("..", folder.split("/"))     # no path component can be '..' (no '/' survives anyway)
+            self.assertFalse(folder.split(" (")[0].endswith(" "))
 
 
 if __name__ == "__main__":

@@ -189,6 +189,9 @@ class Tmdb:
         others = [c["score"] for c in cands if c is not best]
         margin = best["score"] - max(others) if others else None
         confident = best["year"] is not None and (margin is None or margin >= 2)
+        if confident and not best.get("joined") and best["sim"] < 0.85 and not (
+                main_runtime_min and best["runtime"] and abs(best["runtime"] - main_runtime_min) <= 5):
+            confident = False       # a weak title match alone (no rival is not proof) needs the disc runtime to agree
         if confident and best.get("joined") and main_runtime_min and best["runtime"] \
                 and abs(best["runtime"] - main_runtime_min) > 25:
             confident = False       # a squashed-label match needs a consistent runtime to be trusted
@@ -262,7 +265,7 @@ def _candidate(det: dict, res: dict, want: list, year, main_rt, joined_key: str 
         score += 3 if diff <= 5 else 1 if diff <= 15 else -3 if diff > 30 else 0
     return {"id": det.get("id", res.get("id")), "title": ctitle, "year": cyear, "runtime": runtime,
             "lang": det.get("original_language") or res.get("original_language") or None,
-            "score": score, "joined": joined, "norm": " ".join(library_match.tokens(ctitle))}
+            "score": score, "joined": joined, "sim": sim, "norm": " ".join(library_match.tokens(ctitle))}
 
 
 def _pick(cands: list, main_rt) -> dict:

@@ -132,7 +132,8 @@ class OperatorTests(unittest.TestCase):
         self.assertEqual([n for n in os.listdir(d) if n.startswith(".tmp")], [])
 
     def test_clean_title_function(self):
-        self.assertEqual(ops.clean_title("Say Anything..."), "Say Anything")
+        self.assertEqual(ops.clean_title("Say Anything..."), "Say Anything...")
+        self.assertEqual(ops.clean_title("Say Anything"), "Say Anything")
         self.assertEqual(ops.clean_title("  Heat . "), "Heat")
         self.assertEqual(ops.clean_title("Cafe\u0301"), "Caf\u00e9")
         self.assertEqual(ops.clean_title("Mr. Smith"), "Mr. Smith")
@@ -143,10 +144,10 @@ class OperatorTests(unittest.TestCase):
         self.put("awaiting_identity")
         r = ops.identify(self.cfg, self.led, FP, "Say Anything...", 1989)
         self.assertTrue(r["ok"])
-        self.assertEqual(r["title"], "Say Anything")
+        self.assertEqual(r["title"], "Say Anything...")
         import json
         with open(os.path.join(self.cfg.state_path, "identify", FP + ".json")) as fh:
-            self.assertEqual(json.load(fh)["title"], "Say Anything")
+            self.assertEqual(json.load(fh)["title"], "Say Anything...")
 
     def test_identify_symlink_target_refused(self):
         self.put("awaiting_identity")

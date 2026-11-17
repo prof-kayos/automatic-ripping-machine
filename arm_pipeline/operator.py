@@ -103,14 +103,22 @@ _BAD_CATEGORIES = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")
 _YEAR_MSG = "year must be a number between 1888 and next year"
 
 
+def _trim_tail(t: str) -> str:
+    try:
+        from arm_policy.library_match import trim_title_tail
+        return trim_title_tail(t)
+    except ImportError:
+        return t.rstrip(". ")
+
+
 def clean_title(title) -> str:
     """Validate and normalise an owner-supplied movie title. Pure; raises ValueError (safe message).
 
     Rules: text only; NFC-normalised; no control/format/private/unassigned/surrogate/line-separator
     characters (bidi overrides, zero-width characters, BOM ...); no whitespace other than the plain
     ASCII space; none of / \\ : * ? " < > |; must not start with a dot; at most 200 characters and
-    255 UTF-8 bytes. Leading/trailing spaces and TRAILING DOTS are then stripped explicitly (so
-    "Say Anything..." is stored as "Say Anything", matching the library folder name). The result
+    255 UTF-8 bytes. Leading/trailing spaces and trailing dots are then stripped explicitly, except a closing
+    ellipsis glued to a word ("Say Anything..." is kept, giving the folder "Say Anything... (1989)"). The result
     must be non-empty and must yield a non-empty library folder name.
     """
     if not isinstance(title, str):
@@ -124,7 +132,7 @@ def clean_title(title) -> str:
     bad = sorted({c for c in t if c in _BAD_TITLE_CHARS})
     if bad:
         raise ValueError("title must not contain any of: " + " ".join(bad))
-    t = t.strip(" ").rstrip(". ")
+    t = _trim_tail(t.strip(" "))
     if not t:
         raise ValueError("title must not be empty")
     if t.startswith("."):

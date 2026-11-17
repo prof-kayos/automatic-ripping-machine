@@ -624,8 +624,8 @@ def _read_command_file(path: str) -> dict:
 
 def _clean_identity(ans: dict) -> tuple:
     """The title becomes a LIBRARY FOLDER NAME, so this is the trust boundary: validate, never silently 'fix' -- with one
-    explicit normalisation (trailing dots/spaces are stripped, because a folder cannot end with them and a TMDb title such
-    as 'Say Anything...' must still be usable). The dashboard applies the same rules (operator.clean_title); a test keeps
+    explicit normalisation (trailing spaces/dots are stripped, because a folder cannot end with them -- except a closing
+    ellipsis, so the TMDb title 'Say Anything...' becomes the folder 'Say Anything... (1989)'). The dashboard applies the same rules (operator.clean_title); a test keeps
     the two in step."""
     title = ans.get("title")
     year = ans.get("year")
@@ -638,7 +638,7 @@ def _clean_identity(ans: dict) -> tuple:
             raise PipelineError("title contains control, invisible or unusual whitespace characters", "identity")
         if c in _BAD_NAME_CHARS:
             raise PipelineError("title contains characters that cannot be in a folder name", "identity")
-    title = unicodedata.normalize("NFC", title).strip().rstrip(". ").strip()
+    title = library_match.trim_title_tail(unicodedata.normalize("NFC", title))
     if not title or len(title) > 200 or len(title.encode("utf-8")) > 255:
         raise PipelineError("title is empty or too long", "identity")
     if title.startswith("."):          # '/' and '\\' are already refused, so '..' cannot form a path component

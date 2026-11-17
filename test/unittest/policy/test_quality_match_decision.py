@@ -130,6 +130,16 @@ class TestLibraryMatch(unittest.TestCase):
     def test_canonical_folder_strips_bad_chars_and_trailing_dot(self):
         self.assertEqual(lm.canonical_folder('Who Framed: Roger? Rabbit.', 1988), "Who Framed Roger Rabbit (1988)")
 
+    def test_canonical_folder_keeps_closing_ellipsis_only_with_a_year(self):
+        self.assertEqual(lm.canonical_folder("Say Anything...", 1989), "Say Anything... (1989)")
+        self.assertEqual(lm.canonical_folder("Say Anything...", None), "Say Anything")     # would end in dots
+        self.assertEqual(lm.canonical_folder("Say Anything....", 1989), "Say Anything (1989)")
+        self.assertEqual(lm.canonical_folder("...", 1989), "")
+        self.assertEqual(lm.trim_title_tail(" ... "), "")
+        # the library matcher treats the dotted and plain spellings as the same film
+        self.assertEqual(lm.find_match("Say Anything...", 1989, ["Say Anything (1989)"]).status, "exact")
+        self.assertEqual(lm.find_match("Say Anything", 1989, ["Say Anything... (1989)"]).status, "exact")
+
 
 class TestDecision(unittest.TestCase):
     ID = decision.Identity(title="Heat", year=1995, runtime_min=170, original_language="en")

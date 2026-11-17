@@ -325,8 +325,9 @@ async function postAction(fp, a, extraBody) {
   try {
     const r = await api('POST', a.path, extraBody || a.body || {});
     toast(r && r.message ? r.message : 'Done');
-  } catch (e) { if (e.status !== 401) toast(e.message, true); }
-  refreshAll();
+    refreshAll();
+    return { ok: true };
+  } catch (e) { if (e.status !== 401) toast(e.message, true); refreshAll(); return { ok: false, message: e.message }; }
 }
 async function runAction(issue, a, btn) {
   if (a.needs_input === 'identify') { toggleIdentify(issue, a); return; }
@@ -409,7 +410,7 @@ function buildIdentify(issue, action) {
     h('div', { class: 'actions' }, resume, cancel));
 
   function refreshResume() {
-    if (S.manual) resume.disabled = !mt.value.trim();
+    if (S.manual) resume.disabled = !mt.value.trim() || !parseYear(my.value);
     else resume.disabled = !S.picked;
   }
   function renderResults(list) {
@@ -450,9 +451,11 @@ function buildIdentify(issue, action) {
     manual.classList.toggle('hidden', !S.manual);
     toggle.textContent = S.manual ? 'Pick from search results instead' : 'Use my own title';
     if (S.manual && !mt.value) mt.value = q.value;
+    if (S.manual && !my.value && parseYear(yr.value)) my.value = String(parseYear(yr.value));
     refreshResume();
   });
   mt.addEventListener('input', refreshResume);
+  my.addEventListener('input', refreshResume);
   cancel.addEventListener('click', () => { el.remove(); st.panels.delete(issue.id); });
   resume.addEventListener('click', async () => {
     let body;
@@ -460,8 +463,11 @@ function buildIdentify(issue, action) {
     else if (S.picked) body = { title: S.picked.title, year: S.picked.year ? parseInt(S.picked.year, 10) : null, tmdb_id: S.picked.tmdb_id };
     else return;
     resume.disabled = true;
-    await postAction(fp, action, body);
-    el.remove(); st.panels.delete(issue.id);
+    const r = await postAction(fp, action, body);
+    if (r.ok) { el.remove(); st.panels.delete(issue.id); return; }
+    /* refused (bad title/year ...): keep the panel and what was typed, say why right here */
+    status.textContent = 'Not accepted: ' + r.message;
+    refreshResume();
   });
 
   /* prefill + duration hint from the job detail */

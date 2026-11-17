@@ -167,12 +167,26 @@ def video_files(names) -> list:
     return out
 
 
+def trim_title_tail(title: str) -> str:
+    """Strip trailing spaces/dots from a title, EXCEPT a closing ellipsis ('...') glued to a word: 'Say Anything...'
+    keeps its dots (the TMDb/Plex spelling) because a folder name always ends in ' (year)', never in a dot.
+    Any other trailing dot/space run ('Rabbit.', 'Foo . ', 'Foo......') is still dropped, as before."""
+    t = title.strip()
+    m = re.search(r"[ .]+$", t)
+    if m and not (m.group() == "..." and m.start() > 0 and re.search(r"\w", t[m.start() - 1])):
+        t = t[:m.start()]
+    return t
+
+
 def canonical_folder(title, year) -> str:
-    """'Who Framed: Roger? Rabbit.' -> 'Who Framed Roger Rabbit (1988)'. Returns '' if no usable title."""
+    """'Who Framed: Roger? Rabbit.' -> 'Who Framed Roger Rabbit (1988)'. Returns '' if no usable title.
+    With a year, a closing ellipsis survives ('Say Anything...' -> 'Say Anything... (1989)'); without a year the
+    folder would END in the dots (Windows/SMB cannot), so they are dropped."""
     if not isinstance(title, str):
         return ""
-    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", title).strip().rstrip(". ")
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", title)
+    y = _coerce_year(year)
+    safe = trim_title_tail(safe) if y else safe.strip().rstrip(". ")
     if not re.search(r"\w", safe):
         return ""
-    y = _coerce_year(year)
     return f"{safe} ({y})" if y else safe
