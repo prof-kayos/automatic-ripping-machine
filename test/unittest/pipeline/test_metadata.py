@@ -158,5 +158,19 @@ class TmdbTests(unittest.TestCase):
         self.assertNotIn(KEY, str(cm.exception))
 
 
+class QueryVariantTests(unittest.TestCase):
+    def test_trademark_and_publisher_prefix_variants(self):
+        from arm_pipeline.metadata import query_variants
+        v = query_variants("DC Universe Movie Batman™: The Long Halloween Deluxe Edition")
+        self.assertEqual(v[0], "DC Universe Movie Batman™: The Long Halloween Deluxe Edition")   # as given first
+        self.assertEqual(v[1], "DC Universe Movie Batman: The Long Halloween Deluxe Edition")          # symbols stripped
+        self.assertIn("Batman: The Long Halloween Deluxe Edition", v)                                   # prefix dropped
+        self.assertEqual(len(v), len(set(v)))
+
+    def test_short_titles_are_not_reduced_to_nothing(self):
+        from arm_pipeline.metadata import query_variants
+        self.assertEqual(query_variants("Up"), ["Up"])
+        self.assertTrue(all(len(q.split()) >= 2 for q in query_variants("The Big Lebowski")[1:]))
+
 if __name__ == "__main__":
     unittest.main()

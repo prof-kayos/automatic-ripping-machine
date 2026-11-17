@@ -93,6 +93,19 @@ TOP_N = 5
 MIN_SIMILARITY = 0.6
 
 
+def query_variants(title: str) -> list:
+    """Search strings to try, most specific first: the title as given, without trademark symbols, then with up to
+    three leading words dropped (publisher/series prefixes such as 'DC Universe Movie Batman: ...').
+    Candidate scoring (title similarity + runtime + year) still decides; a wrong guess ends in 'low' -> ask."""
+    clean = re.sub(r"[\u2122\u00ae\u00a9]", "", title or "")
+    clean = re.sub(r"\s+", " ", clean).strip()
+    out, words = [], clean.split()
+    for q in [title.strip(), clean] + [" ".join(words[n:]) for n in (1, 2, 3) if len(words) - n >= 2]:
+        if q and q not in out:
+            out.append(q)
+    return out
+
+
 class Tmdb:
     def __init__(self, cfg, api_base: str = "https://api.themoviedb.org/3"):
         self._key = getattr(cfg, "tmdb_api_key", "") or ""
@@ -104,7 +117,9 @@ class Tmdb:
 
     def _get(self, path: str, params: dict) -> dict | None:
         """GET and decode JSON. Errors never include the URL (it carries the API key). 404 -> None."""
-        q = urllib.parse.urlencode(dict(params, api_key=self._key))
+        # language=en-US: without it TMDb returns the UK/original title (e.g. 'Philosopher's Stone'), which would not
+        # match a library filed under the US title
+        q = urllib.parse.urlencode(dict(params, api_key=self._key, language="en-US"))
         try:
             with urllib.request.urlopen(f"{self._base}{path}?{q}", timeout=TIMEOUT_S) as r:
                 data = json.loads(r.read().decode("utf-8"))
@@ -133,7 +148,12 @@ class Tmdb:
             return None
         cands = []
         want = library_match.tokens(title)
-        for r in self._search(title, year):
+        results = []
+        for q in query_variants(title):             # first query that returns anything wins
+            results = self._search(q, year)
+            if results:
+                break
+        for r in results:
             det = self._get(f"/movie/{int(r['id'])}", {})
             if det is None:
                 continue

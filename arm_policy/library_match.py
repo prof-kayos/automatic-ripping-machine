@@ -138,6 +138,13 @@ def find_match(title, year, folders) -> Match:
                      score=scored[0][0] if scored else 0.0)
     top = scored[0]
     close = [x for x in scored[1:] if top[0] - x[0] <= AMBIGUOUS_GAP and x[0] >= LIKELY_SCORE]
+
+    def is_exact(x):
+        return x[0] >= 0.999 and year is not None and x[2] == year
+    # A single exact, year-matching folder is not made ambiguous by fuzzy near-duplicates (typo'd or leftover
+    # folders); two exact ones still are.
+    if close and is_exact(top) and not any(is_exact(x) for x in close):
+        close = []
     if close:
         return Match("ambiguous", folder=top[1], score=top[0],
                      alternatives=[(f, round(s, 3)) for s, f, _ in [top] + close],

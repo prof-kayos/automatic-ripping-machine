@@ -219,3 +219,31 @@ class ReviewRegressions(PipelineBase):
     def test_slack_text_cannot_ping_channels(self):                                # LOW 11
         from arm_pipeline.slack import escape
         self.assertEqual(escape("<!channel> a&b <@U1>"), "&lt;!channel&gt; a&amp;b &lt;@U1&gt;")
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg/ffprobe needed")
+class RegionalTitles(PipelineBase):
+    def test_tmdb_regional_title_does_not_create_a_duplicate_folder(self):
+        """TMDb says 'Philosopher's Stone'; the library (and the disc) say 'Sorcerer's Stone': find the existing movie."""
+        self.make_mkv(self.movie("Harry Potter and the Sorcerer's Stone (2001)", "Harry Potter and the Sorcerer's Stone (2001).mkv"))
+        self.write_scan(label="HARRY_POTTER_SORCERERS_STONE", name="Harry Potter and the Sorcerer's Stone")
+        from arm_policy import decision
+        tmdb = type("T", (), {"configured": True, "identify": lambda *a: decision.Identity(
+            "Harry Potter and the Philosopher's Stone", 2001, 0, "en", 671, "high")})()
+        p = self.pipe(tmdb=tmdb)
+        self.assertEqual(p.handle_new_disc(), "awaiting-approval")          # matched the existing folder: a replace
+        folders = sorted(os.listdir(self.cfg.movies_dir))
+        self.assertEqual([f for f in folders if not f.startswith(".")], ["Harry Potter and the Sorcerer's Stone (2001)"])
+
+    def test_tmdb_requests_ask_for_us_titles(self):
+        from arm_pipeline import metadata
+        seen = []
+
+        def fake_urlopen(url, timeout=15):
+            seen.append(url)
+            raise OSError("stop")
+        t = metadata.Tmdb(self.cfg.__class__(tmdb_api_key="K" * 32), "http://127.0.0.1:1")
+        with mock.patch.object(metadata.urllib.request, "urlopen", fake_urlopen):
+            with self.assertRaises(metadata.MetadataError):
+                t._get("/search/movie", {"query": "x"})
+        self.assertTrue(seen and "language=en-US" in seen[0])

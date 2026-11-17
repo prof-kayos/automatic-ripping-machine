@@ -12,6 +12,7 @@ Design rules (owner policy):
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -200,9 +201,26 @@ class Pipeline:
         title, year = metadata.parse_disc_name(disc.attrs.get(32, ""), disc.name)
         return self.tmdb.identify(title, year, longest // 60 if longest else None) if self.tmdb.configured else None
 
+    def _prefer_library_spelling(self, identity, disc):
+        """TMDb may spell a title differently from the library (regional titles). If the TMDb title matches no folder
+        but the title parsed from the disc does, use the disc's spelling so the existing movie is found instead of a
+        duplicate being created."""
+        try:
+            folders = library.list_folders(self.cfg.movies_dir)
+            if library_match.find_match(identity.title, identity.year, folders).status != "none":
+                return identity
+            alt, _ = metadata.parse_disc_name(disc.attrs.get(32, ""), disc.name)
+            if alt and library_match.find_match(alt, identity.year, folders).status != "none":
+                return dataclasses.replace(identity, title=alt)
+        except Exception:                                              # noqa: BLE001 - best effort only
+            log.exception("library spelling check failed")
+        return identity
+
     def _plan_and_run(self, fp: str, disc, identity_override) -> str:
         try:
             identity = self._identity(disc, identity_override)
+            if identity and not identity_override:
+                identity = self._prefer_library_spelling(identity, disc)
             lib = library.build_library(self.cfg, identity.title, identity.year) if identity else {}
             plan = decision.decide(disc, identity, lib, auto_replace=self.cfg.auto_replace)
         except Exception as e:                                         # noqa: BLE001

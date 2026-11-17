@@ -184,5 +184,30 @@ class TestSmallStuff(unittest.TestCase):
         self.assertEqual(makemkv_scan.parse_segment_map("1-999999999,5"), [5])
 
 
+class ExactBeatsFuzzyTests(unittest.TestCase):
+    """Found by dry-running the real library: a typo'd leftover folder made an exact match 'ambiguous'."""
+
+    def test_single_exact_match_wins_over_a_fuzzy_near_duplicate(self):
+        from arm_policy import library_match
+        folders = ["Harry Potter and the Sorcerer's Stone (2001)", "Harry Potter and the Sorceror's Stone (2001)",
+                   "Harry Potter and the Chamber of Secrets (2002)"]
+        m = library_match.find_match("Harry Potter and the Sorcerer's Stone", 2001, folders)
+        self.assertEqual(m.status, "exact")
+        self.assertEqual(m.folder, "Harry Potter and the Sorcerer's Stone (2001)")
+
+    def test_two_exact_folders_are_still_ambiguous(self):
+        from arm_policy import library_match
+        m = library_match.find_match("Some Film", 2001, ["Some Film (2001)", "Some Film (2001) "])
+        self.assertEqual(m.status, "ambiguous")              # never silently picks between two identical names
+        m2 = library_match.find_match("Some Film", 2001, ["Some Film (2001)", "Some  Film (2001)"])
+        self.assertEqual(m2.status, "ambiguous")
+
+    def test_two_fuzzy_candidates_without_an_exact_one_stay_ambiguous(self):
+        from arm_policy import library_match
+        m = library_match.find_match("Harry Potter and the Sorcerer's Stone", 2001,
+                                     ["Harry Potter and the Sorceror's Stone (2001)",
+                                      "Harry Potter and the Sorcerers Stone (2001)"])
+        self.assertEqual(m.status, "ambiguous")              # no exact folder: a human decides
+
 if __name__ == "__main__":
     unittest.main()
