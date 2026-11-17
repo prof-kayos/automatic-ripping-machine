@@ -39,7 +39,7 @@ def main(argv=None) -> int:
             print(f"{r.fingerprint}  {r.state:18} {r.title or r.label:40} {r.message[:70]}")
         return 0
     if len(argv) < 2:
-        print("usage: arm_pipeline daemon | status | approve FP | reject FP | identify FP \"Title (Year)\" | retry FP | skip FP")
+        print("usage: arm_pipeline daemon | status | approve FP | reject FP | identify FP \"Title (Year)\" | retry FP (also undoes a skip) | skip FP\nrun from the install dir with the env loaded: cd /opt/arm && set -a && . ~/.env && set +a")
         return 2
     fp = argv[1]
     from . import operator as ops

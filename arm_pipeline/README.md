@@ -42,7 +42,7 @@ windows) run concurrently with the share copy. Full decode only if something loo
   file, owner, size, strict title/year rules, state check) before acting.
 
 ## CLI
-`python3 -m arm_pipeline status | approve FP | reject FP | identify FP "Title (Year)" | retry FP | skip FP`
+From the install directory with the env loaded (`cd /opt/arm && set -a && . ~/.env && set +a`; a bare `python3 -m arm_pipeline` elsewhere fails with "No module named arm_pipeline"): `python3 -m arm_pipeline status | approve FP | reject FP | identify FP "Title (Year)" | retry FP | skip FP`. `retry` also undoes a skip (then re-insert the disc); the dashboard's job drawer has the same button.
 
 ## Deploy (Linux, systemd)
 1. Copy `arm_policy/` and `arm_pipeline/` to `/opt/arm/` (keep the previous copy as `/opt/arm.prev` for rollback).

@@ -176,6 +176,13 @@ class OperatorTests(unittest.TestCase):
         self.put("done")
         self.assertFalse(ops.retry(self.cfg, self.led, FP)["ok"])     # a finished disc is not retried
 
+    def test_cli_hint_is_pasteable_from_any_directory(self):
+        from arm_pipeline.errors import cli
+        c = cli("retry", FP)
+        self.assertTrue(c.startswith("cd /"), c)
+        self.assertIn("set -a && . ~/.env", c)
+        self.assertTrue(c.endswith("python3 -m arm_pipeline retry " + FP), c)
+
     def test_skip(self):
         self.put("failed")
         self.assertFalse(ops.skip(self.cfg, self.led, FP)["ok"])

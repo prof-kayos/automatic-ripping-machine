@@ -28,7 +28,7 @@ from arm_policy import decision, library_match, makemkv_scan
 
 from . import drive as drive_mod
 from . import library, metadata, swap, transfer, verify
-from .errors import PipelineError, SwapError
+from .errors import PipelineError, SwapError, cli
 from .events import EventLog
 from .ledger import Ledger, Record, fingerprint, legacy_fingerprint
 from .media_servers import Jellyfin, Plex, to_server_path
@@ -220,7 +220,7 @@ class Pipeline:
                 ok, st = self.drive.eject(self.cfg)
                 tail = " Disc ejected." if ok else f" Eject not confirmed (tray {st})."
             self.slack.post(f"ARM: disc '{disc.name or label}' was already handled (state: {state}). Ignoring it."
-                            f" Use `python3 -m arm_pipeline retry {fp}` to process it again.{tail}")
+                            f" To process it again (also undoes a skip), run as the ripper user: `{cli('retry', fp)}`, then re-insert the disc.{tail}")
             return "already-seen"
         with open(self._state_file("scans", fp, ".txt"), "w") as fh:
             fh.write(text)
@@ -283,8 +283,8 @@ class Pipeline:
         if plan.action in (decision.ASK, decision.ASK_IDENTITY):
             self.ledger.set_state(fp, "awaiting_identity", why)
             self.slack.post(f":question: ARM needs a human for *{disc.name or fp}*: {why}. The disc stays in the drive. "
-                            f"Answer with `python3 -m arm_pipeline identify {fp} \"Title (Year)\"` "
-                            f"or skip it with `python3 -m arm_pipeline skip {fp}`.", needs_action=True)
+                            f"Answer with `{cli('identify', fp, '\"Title (Year)\"')}` "
+                            f"or skip it with `{cli('skip', fp)}`.", needs_action=True)
             return "awaiting-identity"
         return self._rip_verify_stage(fp, disc, plan, name, identity)
 
@@ -404,7 +404,7 @@ class Pipeline:
     def _ask_approval(self, fp, plan, name, info) -> str:
         text = (f":scales: ARM wants to REPLACE the existing copy of *{name}* ({plan.existing_file}) with the new rip: "
                 f"{'; '.join(plan.reasons)}. New file: {info}. React with :white_check_mark: to approve or :x: to reject"
-                f" (or run `python3 -m arm_pipeline approve {fp}` / `reject {fp}`). Nothing in the library has changed; "
+                f" (or run `{cli('approve', fp)}` / `reject`). Nothing in the library has changed; "
                 "the new file is staged as .part.")
         ticket = self.slack.ask_approval(text)
         if ticket is None:

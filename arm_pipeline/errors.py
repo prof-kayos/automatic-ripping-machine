@@ -33,3 +33,13 @@ class MetadataError(PipelineError):
 
 class DriveError(PipelineError):
     step = "drive"
+
+
+def cli(sub: str, fp: str = "", extra: str = "") -> str:
+    """A command line the owner can paste in a shell on the ripper and it will work: the package is only importable from its
+    install directory (the unit sets PYTHONPATH=/opt/arm), and the settings come from ~/.env. A bare `python3 -m arm_pipeline ...`
+    fails with 'No module named arm_pipeline'."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tail = " ".join(x for x in (sub, fp, extra) if x)
+    return f"cd {root} && set -a && . ~/.env && set +a && python3 -m arm_pipeline {tail}"

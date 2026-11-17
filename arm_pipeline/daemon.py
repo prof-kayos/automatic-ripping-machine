@@ -15,7 +15,7 @@ import time
 
 from . import drive as drive_mod
 from . import swap
-from .errors import DriveError
+from .errors import DriveError, cli
 from .pipeline import Pipeline
 
 log = logging.getLogger("arm.daemon")
@@ -41,7 +41,7 @@ def recover_interrupted(pipe: Pipeline) -> int:
         pipe.ledger.set_state(rec.fingerprint, "failed", f"interrupted by a restart while {rec.state}")
         pipe.slack.post(f":warning: ARM was restarted while '{rec.title or rec.fingerprint}' was {rec.state}; the job "
                         f"is marked failed (never auto-resumed, staged files kept).{note} Re-insert the disc and run "
-                        f"`python3 -m arm_pipeline retry {rec.fingerprint}` to try again.", needs_action=True)
+                        f"`{cli('retry', rec.fingerprint)}` to try again.", needs_action=True)
         n += 1
     return n
 
