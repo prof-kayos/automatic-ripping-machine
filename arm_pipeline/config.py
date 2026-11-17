@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import urllib.parse
 from dataclasses import dataclass, field
 
 
@@ -9,6 +10,27 @@ def _b(v: str | None, default: bool = False) -> bool:
     if v is None or v == "":
         return default
     return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def validate_dashboard_url(url: str) -> str:
+    """'' (no link) or a plain http(s) URL: no credentials, query, fragment, whitespace or Slack-markup characters."""
+    url = (url or "").strip()
+    if not url:
+        return ""
+    if any(c.isspace() or c in "<>|" for c in url):
+        raise ValueError("dashboard_url must not contain whitespace, '<', '>' or '|'")
+    try:
+        u = urllib.parse.urlsplit(url)
+        u.port                                    # raises ValueError on a bad port
+    except ValueError as e:
+        raise ValueError(f"dashboard_url is not a valid URL ({e})") from None
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise ValueError("dashboard_url must be an http(s) URL with a host")
+    if u.username is not None or u.password is not None or "@" in u.netloc:
+        raise ValueError("dashboard_url must not contain credentials")
+    if u.query or u.fragment or "?" in url or "#" in url:
+        raise ValueError("dashboard_url must not contain a query string or fragment")
+    return url
 
 
 @dataclass(frozen=True)
@@ -30,6 +52,7 @@ class Config:
     slack_bot_token: str = field(default="", repr=False)                    # optional: enables approval by reaction
     slack_channel_id: str = ""
     slack_owner_id: str = ""                     # only this user's reaction counts
+    dashboard_url: str = ""                      # public URL of the dashboard, linked from Slack messages; "" = no link
     # --- media servers (paths are as THE SERVER sees them, which can differ from movies_dir)
     jellyfin_url: str = ""
     jellyfin_token: str = field(default="", repr=False)
@@ -59,6 +82,9 @@ class Config:
     dashboard_port: int = 8088
     dashboard_secure_cookie: bool = False        # True when served behind HTTPS
 
+    def __post_init__(self):
+        object.__setattr__(self, "dashboard_url", validate_dashboard_url(self.dashboard_url))
+
     @property
     def state_path(self) -> str:
         return os.path.expanduser(self.state_dir)
@@ -84,6 +110,7 @@ class Config:
             ffprobe=g("ARM_FFPROBE", cls.ffprobe),
             slack_url=g("SLACK_URL"), slack_bot_token=g("SLACK_BOT_TOKEN"),
             slack_channel_id=g("SLACK_CHANNEL_ID"), slack_owner_id=g("SLACK_OWNER_ID"),
+            dashboard_url=g("ARM_DASHBOARD_URL"),
             jellyfin_url=g("JELLYFIN_URL"), jellyfin_token=g("JELLYFIN_TOKEN"),
             jellyfin_movies_path=g("ARM_JELLYFIN_MOVIES_PATH", cls.jellyfin_movies_path),
             plex_url=g("PLEX_URL"), plex_token=g("PLEX_TOKEN"), plex_section_id=g("PLEX_SECTION_ID", "1"),

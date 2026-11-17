@@ -21,3 +21,5 @@ ARM_VERIFY_FULL_DECODE=0
 ARM_DASHBOARD_BIND=192.0.2.10
 ARM_DASHBOARD_PORT=8088
 ARM_DASHBOARD_ALLOWED_HOSTS=192.0.2.10,ripper,localhost,127.0.0.1
+# Optional: link appended to Slack messages that need your action (approvals, identity requests, failures) ("Open dashboard"). Plain http(s) URL, no credentials/query; empty = no link.
+#ARM_DASHBOARD_URL=http://ripper.example.invalid:8088/

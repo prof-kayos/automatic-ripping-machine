@@ -135,3 +135,99 @@ class SlackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DashboardLinkTests(unittest.TestCase):
+    URL = "http://ripper.example.invalid:8088/"
+
+    def test_config_validation(self):
+        from arm_pipeline.config import Config, validate_dashboard_url
+        self.assertEqual(Config().dashboard_url, "")
+        self.assertEqual(Config.from_env({"ARM_DASHBOARD_URL": self.URL}).dashboard_url, self.URL)
+        self.assertEqual(validate_dashboard_url("  "), "")
+        for bad in ("ftp://h/", "javascript:alert(1)", "http://", "//h/x", "http://u:p@h/", "http://u@h/",
+                    "http://h/?a=1", "http://h/#x", "http://h/ x", "http://h/<x>", "http://h/a|b", "http://h:99999/"):
+            with self.assertRaises(ValueError, msg=bad):
+                Config(dashboard_url=bad)
+
+    def test_link_appended_and_escaped(self):
+        from arm_pipeline.slack import with_link
+        out = with_link("hi <!channel> & co", self.URL)
+        self.assertTrue(out.startswith("hi &lt;!channel&gt; &amp; co"))
+        self.assertTrue(out.endswith(f"<{self.URL}|Open dashboard>"))
+        self.assertEqual(with_link("x", "http://h/a&b"), "x\n<http://h/a&amp;b|Open dashboard>")
+
+    def test_no_link_when_empty_and_no_double_append(self):
+        from arm_pipeline.slack import with_link
+        self.assertEqual(with_link("hello", ""), "hello")
+        once = with_link("hello", self.URL)
+        self.assertEqual(once.count("Open dashboard"), 1)
+        plain = f"already see {self.URL} here"          # text that already carries the URL: no second link
+        self.assertEqual(with_link(plain, self.URL), plain)
+
+    def test_link_survives_truncation(self):
+        from arm_pipeline.slack import MAX_TEXT, with_link
+        out = with_link("a" * 5000, self.URL)
+        self.assertLessEqual(len(out), MAX_TEXT)
+        self.assertTrue(out.endswith("|Open dashboard>"))
+
+    def test_post_and_approval_carry_link_events_text_untouched(self):
+        sent = []
+
+        class Resp:
+            status = 200
+            def __enter__(s): return s
+            def __exit__(s, *a): pass
+            def read(s): return b'{"ok": true, "ts": "1.2", "channel": "C1"}'
+
+        class Op:
+            def open(s, req, timeout=None):
+                sent.append(json.loads(req.data)["text"])
+                return Resp()
+
+        cfg = Config(slack_url="http://hook.invalid/x", slack_bot_token="t", slack_channel_id="C1",
+                     dashboard_url=self.URL)
+        n = Notifier(cfg, opener=Op())
+        self.assertTrue(n.post(":white_check_mark: ADDED movie"))          # success: never linked
+        self.assertTrue(n.post(":robot_face: started", needs_action=False))
+        self.assertTrue(n.post(":question: needs identify", needs_action=True))
+        self.assertIsNotNone(n.ask_approval("approve?"))                   # approval: always linked
+        link = f"<{self.URL}|Open dashboard>"
+        self.assertEqual([t.endswith(link) for t in sent], [False, False, True, True])
+        from arm_pipeline.pipeline import _Tee
+
+        class Ev:
+            def emit(s, *a, **k): s.a = a
+
+        class Inner:
+            def post(s, t, needs_action=False): s.t = t; s.na = needs_action
+        ev, inner = Ev(), Inner()
+        _Tee(inner, ev, lambda: None).post(":warning: x", needs_action=True)
+        self.assertNotIn("dashboard", ev.a[1])
+        self.assertTrue(inner.na)
+
+    def test_finish_flags_only_intervention_states(self):
+        from arm_pipeline.pipeline import Pipeline
+
+        class Slack:
+            def __init__(s): s.calls = []
+            def post(s, t, needs_action=False): s.calls.append((t, needs_action))
+
+        class Drive:
+            ok = True
+            def eject(s, cfg): return s.ok, "open"
+
+        class Led:
+            def set_state(s, *a, **k): pass
+
+        class Prog:
+            def clear(s, fp): pass
+        p = Pipeline.__new__(Pipeline)
+        p.cfg, p.slack, p.drive, p.ledger, p.progress = None, Slack(), Drive(), Led(), Prog()
+        for state in ("done", "skipped"):
+            p._finish("fp", state, "m", eject=True)
+        for state in ("failed", "rejected"):
+            p._finish("fp", state, "m", eject=False)
+        Drive.ok = False
+        p._finish("fp", "done", "m", eject=True)       # eject not confirmed -> human must look
+        self.assertEqual([f for _, f in p.slack.calls], [False, False, True, True, True])

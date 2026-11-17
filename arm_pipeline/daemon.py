@@ -41,7 +41,7 @@ def recover_interrupted(pipe: Pipeline) -> int:
         pipe.ledger.set_state(rec.fingerprint, "failed", f"interrupted by a restart while {rec.state}")
         pipe.slack.post(f":warning: ARM was restarted while '{rec.title or rec.fingerprint}' was {rec.state}; the job "
                         f"is marked failed (never auto-resumed, staged files kept).{note} Re-insert the disc and run "
-                        f"`python3 -m arm_pipeline retry {rec.fingerprint}` to try again.")
+                        f"`python3 -m arm_pipeline retry {rec.fingerprint}` to try again.", needs_action=True)
         n += 1
     return n
 
@@ -97,7 +97,7 @@ def run(cfg, pipe: Pipeline | None = None, stop=None, sleep=time.sleep) -> None:
                 pipe.poll_pending()
             elif not share_alerted:
                 pipe.slack.post(":warning: ARM: the movies share failed its canary check (stale or unmounted?). "
-                                "Pausing until it recovers; a container restart may be needed.")
+                                "Pausing until it recovers; a container restart may be needed.", needs_action=True)
                 share_alerted = True
             try:
                 present = drive_mod.disc_present(cfg.sr_dev)
@@ -105,7 +105,7 @@ def run(cfg, pipe: Pipeline | None = None, stop=None, sleep=time.sleep) -> None:
             except DriveError as e:
                 present = False
                 if not drive_alerted:
-                    pipe.slack.post(f":warning: ARM cannot read the drive: {e}")
+                    pipe.slack.post(f":warning: ARM cannot read the drive: {e}", needs_action=True)
                     drive_alerted = True
             if present and not share_alerted:
                 waiting = [r for r in pipe.ledger.active() if r.state == "awaiting_identity"]

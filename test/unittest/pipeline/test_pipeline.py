@@ -45,9 +45,11 @@ def scan_text(res="1920x1080", label="TEST_DISC_XYZ", name="Test Movie"):
 class FakeSlack:
     def __init__(self):
         self.msgs = []
+        self.flags = []
 
-    def post(self, text):
+    def post(self, text, needs_action=False):
         self.msgs.append(text)
+        self.flags.append(needs_action)
         return True
 
     def ask_approval(self, text):

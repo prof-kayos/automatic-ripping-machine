@@ -17,6 +17,21 @@ MAX_TEXT = 3000
 def escape(text: str) -> str:
     """Slack mrkdwn control characters: a hostile disc label or title must not ping @channel or inject links."""
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def with_link(text: str, url: str) -> str:
+    """Escape `text` for mrkdwn, cap it, and append a compact dashboard link (once). The dashboard has no
+    per-disc routing (no hash/path routes in static/app.js), so the link always goes to the root."""
+    out = escape(text)
+    if not url:
+        return out[:MAX_TEXT]
+    safe = escape(url).replace("|", "%7C")
+    if safe in out:                                # already carries the link: never double-append
+        return out[:MAX_TEXT]
+    link = f"\n<{safe}|Open dashboard>"
+    return out[:max(0, MAX_TEXT - len(link))] + link
+
+
 APPROVE = {"white_check_mark", "+1", "heavy_check_mark"}
 REJECT = {"x", "no_entry_sign", "-1"}
 
@@ -37,9 +52,9 @@ class Notifier:
         self._backoff = backoff_s
 
     # ---- webhook notifications -------------------------------------------------
-    def post(self, text: str) -> bool:
-        """Send a notification. Never raises; returns True on success. Never logs the URL."""
-        text = escape(text)[:MAX_TEXT]
+    def post(self, text: str, needs_action: bool = False) -> bool:
+        """Send a notification (needs_action=True appends the dashboard link). Never raises; returns True on success. Never logs the URL."""
+        text = with_link(text, getattr(self.cfg, "dashboard_url", "") if needs_action else "")
         if not self.cfg.slack_url:
             log.info("slack not configured; message: %s", text)
             return False
@@ -74,12 +89,12 @@ class Notifier:
         with self.opener.open(req, timeout=TIMEOUT_S) as resp:
             return json.loads(resp.read().decode())
 
-    def ask_approval(self, text: str) -> Ticket | None:
+    def ask_approval(self, text: str, needs_action: bool = True) -> Ticket | None:
         """Post a message the owner can react to. None if the bot is not configured or the call fails."""
         if not (self.cfg.slack_bot_token and self.cfg.slack_channel_id):
             return None
         try:
-            r = self._api("chat.postMessage", {"channel": self.cfg.slack_channel_id, "text": escape(text)[:MAX_TEXT]})
+            r = self._api("chat.postMessage", {"channel": self.cfg.slack_channel_id, "text": with_link(text, getattr(self.cfg, "dashboard_url", "") if needs_action else "")})
         except Exception as e:
             log.warning("ask_approval failed (%s)", type(e).__name__)
             return None

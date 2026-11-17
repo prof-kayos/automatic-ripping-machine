@@ -53,16 +53,19 @@ def _fmt_dur(s: int) -> str:
     return f"{s // 3600}h{(s % 3600) // 60:02d}m"
 
 
+NEEDS_ACTION_STATES = frozenset({"failed", "rejected"})   # terminal states a human should look at
+
+
 class _Tee:
     """Wraps the notifier: every message posted to Slack is also written to the event log the dashboard reads."""
 
     def __init__(self, inner, events, current_fp):
         self._inner, self._events, self._current_fp = inner, events, current_fp
 
-    def post(self, text):
+    def post(self, text, needs_action=False):
         level = "error" if text.startswith(":x:") else "warning" if text.startswith(":warning:") else "info"
         self._events.emit("slack", text, fp=self._current_fp(), level=level)
-        return self._inner.post(text)
+        return self._inner.post(text, needs_action=needs_action)
 
     def __getattr__(self, name):                 # ask_approval, poll_approval, ...
         return getattr(self._inner, name)
@@ -162,12 +165,14 @@ class Pipeline:
 
     def _finish(self, fp: str, state: str, message: str, eject: bool, **fields) -> None:
         tail = ""
+        needs_action = state in NEEDS_ACTION_STATES
         if eject:
             ok, st = self.drive.eject(self.cfg)
             tail = f" Disc ejected." if ok else f" EJECT NOT CONFIRMED (tray {st}) - please check the drive."
+            needs_action = needs_action or not ok
         self.ledger.set_state(fp, state, message, **fields)
         self.progress.clear(fp)
-        self.slack.post(message + tail)
+        self.slack.post(message + tail, needs_action=needs_action)
 
     # ------------------------------------------------------------------ entry points
     def scan_disc(self):
@@ -191,17 +196,17 @@ class Pipeline:
             fp = self._current_fp
             if fp and self.ledger.get(fp):
                 self.ledger.set_state(fp, "failed", msg)
-            self.slack.post(msg)
+            self.slack.post(msg, needs_action=True)
             return "failed"
 
     def _handle_new_disc(self) -> str:
         if not self.canary_ok():
-            self.slack.post(":warning: ARM: the movies share failed its canary check; not processing the disc.")
+            self.slack.post(":warning: ARM: the movies share failed its canary check; not processing the disc.", needs_action=True)
             return "share-unavailable"
         try:
             disc, text = self.scan_disc()
         except PipelineError as e:
-            self.slack.post(f":x: ARM failed at {e.step}: {e}. Disc left in the drive.")
+            self.slack.post(f":x: ARM failed at {e.step}: {e}. Disc left in the drive.", needs_action=True)
             return "scan-failed"
         label = disc.attrs.get(32, "") or disc.name
         fp = fingerprint(label, disc.titles)
@@ -279,7 +284,7 @@ class Pipeline:
             self.ledger.set_state(fp, "awaiting_identity", why)
             self.slack.post(f":question: ARM needs a human for *{disc.name or fp}*: {why}. The disc stays in the drive. "
                             f"Answer with `python3 -m arm_pipeline identify {fp} \"Title (Year)\"` "
-                            f"or skip it with `python3 -m arm_pipeline skip {fp}`.")
+                            f"or skip it with `python3 -m arm_pipeline skip {fp}`.", needs_action=True)
             return "awaiting-identity"
         return self._rip_verify_stage(fp, disc, plan, name, identity)
 
@@ -403,7 +408,7 @@ class Pipeline:
                 "the new file is staged as .part.")
         ticket = self.slack.ask_approval(text)
         if ticket is None:
-            self.slack.post(text)
+            self.slack.post(text, needs_action=True)
         for kind in ("approve", "reject"):                  # an answer given BEFORE this request must not count
             try:
                 os.remove(self._state_file(kind, fp))
@@ -417,7 +422,7 @@ class Pipeline:
         self.progress.clear(fp)
         ok, st = self.drive.eject(self.cfg)           # the data is safely off the disc: free the drive
         if not ok:
-            self.slack.post(f":warning: ARM: eject not confirmed (tray {st}).")
+            self.slack.post(f":warning: ARM: eject not confirmed (tray {st}).", needs_action=True)
         return "awaiting-approval"
 
     def poll_pending(self) -> None:
@@ -428,7 +433,7 @@ class Pipeline:
                     self._poll_approval(rec)
             except Exception as e:                                     # noqa: BLE001
                 log.exception("poll failed for %s", rec.fingerprint)
-                self.slack.post(f":x: ARM error while resuming {rec.fingerprint}: {e}")
+                self.slack.post(f":x: ARM error while resuming {rec.fingerprint}: {e}", needs_action=True)
 
     def _poll_approval(self, rec) -> None:
         fp = rec.fingerprint
@@ -572,7 +577,7 @@ class Pipeline:
             except OSError:
                 pass
             self.slack.post(f":warning: ARM ignored an invalid identity answer for {fp}: {e}. "
-                            "The disc is still waiting for a valid one.")
+                            "The disc is still waiting for a valid one.", needs_action=True)
             return None
         os.remove(path)
         text = _read(self._state_file("scans", fp, ".txt"))
