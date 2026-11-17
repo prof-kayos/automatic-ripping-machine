@@ -73,6 +73,16 @@ class TestHtml(unittest.TestCase):
         for t in ("text", "password", "number", "search"):
             self.assertIn('[data-theme="dark"] input[type=%s]' % t, css)
 
+    def test_job_table_never_breaks_title_or_state_mid_word(self):
+        """Regression: `overflow-wrap: anywhere` on every table cell (and on the title button) let a long Message squeeze the
+        Title and State columns to a few characters, so badges read 'skipp / ed' and titles 'ZOOLAN / DER'."""
+        css = re.sub(r"/\*.*?\*/", "", (STATIC / "style.css").read_text(), flags=re.S)
+        rules = {m.group(1).strip(): m.group(2) for m in re.finditer(r"([^{}@]+)\{([^{}]*)\}", css)}
+        self.assertNotIn("anywhere", rules[".rowbtn"])
+        self.assertRegex(rules[".jobs td:nth-child(2), .jobs td:nth-child(4)"], r"white-space:\s*nowrap")
+        self.assertRegex(rules[".jobs td:nth-child(2) .badge"], r"white-space:\s*nowrap")
+        self.assertNotIn("anywhere", rules[".jobs td:nth-child(1)"])
+
     def test_theme_assets_original_and_whitelisted(self):
         allowed = {"index.html", "app.js", "style.css", "favicon.svg", "favicon.ico", "icon.svg", "manifest.webmanifest"}
         for f in STATIC.iterdir():
