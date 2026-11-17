@@ -171,6 +171,6 @@ class Ledger:
         rec = self.get(fp)
         if rec is None:
             return
-        if rec.state not in ('failed', 'rejected'):
-            raise ValueError(f'retry only applies to failed/rejected, not {rec.state!r}')
+        if rec.state not in ('failed', 'rejected', 'skipped'):
+            raise ValueError(f'retry only applies to failed/rejected/skipped, not {rec.state!r}')
         os.unlink(self._path(fp))

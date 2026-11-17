@@ -569,6 +569,16 @@ async function openDetail(fp) {
   add('Fingerprint', d.fp); add('Created', d.created ? new Date(d.created * 1000).toLocaleString() : '');
   if (d.paths && typeof d.paths === 'object') for (const k of Object.keys(d.paths)) add(k, d.paths[k]);
   shell.append(h('h3', { text: 'Details' }), kv);
+  if (['skipped', 'failed', 'rejected'].includes(d.state)) {
+    const again = h('button', { type: 'button', class: 'btn primary', text: d.state === 'skipped' ? 'Undo skip (process again)' : 'Process again' });
+    again.addEventListener('click', async () => {
+      if (!(await confirmModal('Clear this record so the disc is processed again the next time it is inserted?', 'Process again'))) return;
+      again.disabled = true;
+      const r = await postAction(d.fp, { path: '/api/jobs/' + encodeURIComponent(d.fp) + '/retry' });
+      if (r.ok) closeLayer(false); else again.disabled = false;
+    });
+    shell.append(h('div', { class: 'actions' }, again));
+  }
 
   const hist = d.history || [];
   shell.append(h('h3', { text: 'Timeline' }));

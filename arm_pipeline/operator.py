@@ -219,10 +219,12 @@ def retry(cfg, led, fp) -> dict:
         return bad
     if rec is None:
         return _res(False, "unknown disc")
-    if rec.state not in ("failed", "rejected"):
-        return _res(False, f"retry only applies to failed or rejected discs, not {rec.state}")
+    if rec.state not in ("failed", "rejected", "skipped"):
+        return _res(False, f"retry only applies to failed, rejected or skipped discs, not {rec.state}")
+    was = rec.state
     led.retry(fp)
-    return _res(True, "record cleared; the disc will be processed again when it is next inserted")
+    return _res(True, ("skip undone" if was == "skipped" else "record cleared")
+                + "; the disc will be processed again when it is next inserted")
 
 
 def skip(cfg, led, fp, eject_fn=None, drive_mod=None) -> dict:

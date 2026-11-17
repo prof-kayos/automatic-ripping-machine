@@ -166,6 +166,16 @@ class OperatorTests(unittest.TestCase):
         self.put("rejected")
         self.assertTrue(ops.retry(self.cfg, self.led, FP)["ok"])
 
+    def test_retry_undoes_a_skip(self):
+        for why in ("skipped by owner", "equal quality"):
+            self.put("skipped")
+            r = ops.retry(self.cfg, self.led, FP)
+            self.assertTrue(r["ok"], why)
+            self.assertIn("skip undone", r["message"])
+            self.assertIsNone(self.led.get(FP))
+        self.put("done")
+        self.assertFalse(ops.retry(self.cfg, self.led, FP)["ok"])     # a finished disc is not retried
+
     def test_skip(self):
         self.put("failed")
         self.assertFalse(ops.skip(self.cfg, self.led, FP)["ok"])
