@@ -220,7 +220,8 @@ class Pipeline:
                 ok, st = self.drive.eject(self.cfg)
                 tail = " Disc ejected." if ok else f" Eject not confirmed (tray {st})."
             self.slack.post(f"ARM: disc '{disc.name or label}' was already handled (state: {state}). Ignoring it."
-                            f" To process it again (also undoes a skip), run as the ripper user: `{cli('retry', fp)}`, then re-insert the disc.{tail}")
+                            f" To process it again (this also undoes a skip) press Retry on the dashboard, or run as the ripper user: `{cli('retry', fp)}`. "
+                            f"A disc still in the drive is picked up again; otherwise re-insert it.{tail}")
             return "already-seen"
         with open(self._state_file("scans", fp, ".txt"), "w") as fh:
             fh.write(text)

@@ -162,6 +162,24 @@ class ReviewRegressions(PipelineBase):
                        sleep=lambda s: None)
         self.assertEqual(calls["n"], 1)                                             # one attempt, not one per cycle
 
+    def test_retry_reprocesses_a_disc_that_never_left_the_drive(self):
+        from arm_pipeline import operator as ops
+        p = self.pipe()
+        calls = {"n": 0, "cycles": 0}
+        p.handle_new_disc = lambda: calls.__setitem__("n", calls["n"] + 1) or "x"
+        rec = pl.Record(fingerprint="a" * 16, state="failed", label="L", title="T", created=1.0, updated=1.0)
+        p.ledger.put(rec)
+
+        def stop():
+            calls["cycles"] += 1
+            if calls["cycles"] == 3:                                # the owner presses Retry while the disc stays in
+                self.assertTrue(ops.retry(self.cfg, p.ledger, rec.fingerprint)["ok"])
+            return calls["cycles"] > 6
+        with mock.patch.object(daemon.drive_mod, "disc_present", lambda dev: True):
+            daemon.run(self.cfg, pipe=p, stop=stop, sleep=lambda s: None)
+        self.assertEqual(calls["n"], 2)                              # once at start, once more after Retry (not every cycle)
+        self.assertFalse(daemon.consume_rescan(self.cfg))            # the marker was consumed
+
     def test_handler_crash_marks_record_failed_with_one_message(self):             # HIGH 3 (inside the pipeline)
         self.write_scan()
         p = self.pipe()

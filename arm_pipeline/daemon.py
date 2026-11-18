@@ -40,10 +40,26 @@ def recover_interrupted(pipe: Pipeline) -> int:
                 note = f" REPLACE ROLLBACK FAILED ({e}): check the movie folder by hand NOW."
         pipe.ledger.set_state(rec.fingerprint, "failed", f"interrupted by a restart while {rec.state}")
         pipe.slack.post(f":warning: ARM was restarted while '{rec.title or rec.fingerprint}' was {rec.state}; the job "
-                        f"is marked failed (never auto-resumed, staged files kept).{note} Re-insert the disc and run "
-                        f"`{cli('retry', rec.fingerprint)}` to try again.", needs_action=True)
+                        f"is marked failed (never auto-resumed, staged files kept).{note} To try again press Retry on the "
+                        f"dashboard, or run `{cli('retry', rec.fingerprint)}` (a disc still in the drive is picked up again).", needs_action=True)
         n += 1
     return n
+
+
+def consume_rescan(cfg) -> bool:
+    """True if the owner asked for a retry since the last look (marker files in state/rescan); the markers are removed.
+    Lets `retry` re-process a disc that never left the drive instead of demanding an eject and re-insert."""
+    d = os.path.join(cfg.state_path, "rescan")
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return False
+    for n in names:
+        try:
+            os.unlink(os.path.join(d, n))
+        except OSError:
+            pass
+    return bool(names)
 
 
 def cleanup_scratch(pipe: Pipeline, max_age_s: int = 86400) -> int:
@@ -107,6 +123,9 @@ def run(cfg, pipe: Pipeline | None = None, stop=None, sleep=time.sleep) -> None:
                 if not drive_alerted:
                     pipe.slack.post(f":warning: ARM cannot read the drive: {e}", needs_action=True)
                     drive_alerted = True
+            asked = consume_rescan(cfg)
+            if asked and present and not share_alerted:
+                prev_present = False                      # retry with the disc still inside: treat it as newly inserted
             if present and not share_alerted:
                 waiting = [r for r in pipe.ledger.active() if r.state == "awaiting_identity"]
                 if not prev_present:

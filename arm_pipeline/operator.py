@@ -223,8 +223,12 @@ def retry(cfg, led, fp) -> dict:
         return _res(False, f"retry only applies to failed, rejected or skipped discs, not {rec.state}")
     was = rec.state
     led.retry(fp)
+    try:
+        _touch(cfg, "rescan", fp)       # tells the daemon to look at the drive again even though nothing was re-inserted
+    except ValueError:
+        pass                            # best effort: the record is cleared either way
     return _res(True, ("skip undone" if was == "skipped" else "record cleared")
-                + "; the disc will be processed again when it is next inserted")
+                + "; if the disc is still in the drive it is picked up again within a few seconds, otherwise on its next insertion")
 
 
 def skip(cfg, led, fp, eject_fn=None, drive_mod=None) -> dict:

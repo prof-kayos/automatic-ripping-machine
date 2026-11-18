@@ -572,7 +572,7 @@ async function openDetail(fp) {
   if (['skipped', 'failed', 'rejected'].includes(d.state)) {
     const again = h('button', { type: 'button', class: 'btn primary', text: d.state === 'skipped' ? 'Undo skip (process again)' : 'Process again' });
     again.addEventListener('click', async () => {
-      if (!(await confirmModal('Clear this record so the disc is processed again the next time it is inserted?', 'Process again'))) return;
+      if (!(await confirmModal('Clear this record and process the disc again? (If it is still in the drive it starts again within seconds; otherwise on its next insertion.)', 'Process again'))) return;
       again.disabled = true;
       const r = await postAction(d.fp, { path: '/api/jobs/' + encodeURIComponent(d.fp) + '/retry' });
       if (r.ok) closeLayer(false); else again.disabled = false;
