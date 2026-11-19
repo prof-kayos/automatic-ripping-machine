@@ -15,7 +15,7 @@ NODE = shutil.which("node")
 ALLOWED = {
     "/api/login", "/api/session", "/api/logout", "/api/status", "/api/issues",
     "/api/jobs", "/api/jobs/<fp>", "/api/events", "/api/tmdb/search",
-    "/api/jobs/<fp>/approve", "/api/jobs/<fp>/reject", "/api/jobs/<fp>/retry",
+    "/api/scratch/clean", "/api/jobs/<fp>/approve", "/api/jobs/<fp>/reject", "/api/jobs/<fp>/retry",
     "/api/jobs/<fp>/skip", "/api/jobs/<fp>/dismiss", "/api/jobs/<fp>/identify",
     "/api/drive/eject",
 }

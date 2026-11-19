@@ -28,7 +28,7 @@ class OperatorTests(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.addCleanup(self.td.cleanup)
-        self.cfg = Config(state_dir=os.path.join(self.td.name, "state"))
+        self.cfg = Config(state_dir=os.path.join(self.td.name, "state"), scratch_dir=os.path.join(self.td.name, "scratch"))
         self.led = Ledger(self.cfg.state_path)
 
     def put(self, state, fp=FP):
@@ -182,6 +182,31 @@ class OperatorTests(unittest.TestCase):
         self.assertTrue(c.startswith("cd /"), c)
         self.assertIn("set -a && . ~/.env", c)
         self.assertTrue(c.endswith("python3 -m arm_pipeline retry " + FP), c)
+
+    def _rip_dir(self, name, size=2048):
+        d = os.path.join(self.cfg.scratch_dir, "rips", name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "t00.mkv"), "wb") as f:
+            f.write(b"x" * size)
+        return d
+
+    def test_retry_removes_that_discs_partial_rip(self):
+        mine, other = self._rip_dir(FP), self._rip_dir("b" * 16)
+        self.put("failed")
+        self.assertTrue(ops.retry(self.cfg, self.led, FP)["ok"])
+        self.assertFalse(os.path.exists(mine))
+        self.assertTrue(os.path.exists(other))                     # another disc's folder is untouched
+
+    def test_clean_scratch_keeps_live_jobs_and_refuses_while_busy(self):
+        done, orphan, live = self._rip_dir("c" * 16), self._rip_dir("d" * 16), self._rip_dir(FP)
+        self.put("done", "c" * 16)
+        self.put("awaiting_approval")                              # FP: still needs its rip folder
+        r = ops.clean_scratch(self.cfg, self.led)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual((os.path.exists(done), os.path.exists(orphan), os.path.exists(live)), (False, False, True))
+        self.put("ripping")
+        self.assertFalse(ops.clean_scratch(self.cfg, self.led)["ok"])
+        self.assertTrue(os.path.exists(live))
 
     def test_skip(self):
         self.put("failed")

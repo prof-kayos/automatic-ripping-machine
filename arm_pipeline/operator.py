@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
 import time
 import unicodedata
@@ -223,6 +224,7 @@ def retry(cfg, led, fp) -> dict:
         return _res(False, f"retry only applies to failed, rejected or skipped discs, not {rec.state}")
     was = rec.state
     led.retry(fp)
+    _remove_rip_dir(cfg, fp)            # the old partial rip would only eat scratch space the new attempt needs
     try:
         _touch(cfg, "rescan", fp)       # tells the daemon to look at the drive again even though nothing was re-inserted
     except ValueError:
@@ -256,6 +258,56 @@ def dismiss(cfg, led, fp) -> dict:
         return _res(False, "dismiss only applies to a stuck awaiting_identity or failed record")
     led.set_state(fp, "skipped", "dismissed by owner")
     return _res(True, "dismissed")
+
+
+_FP16 = re.compile(r"^[0-9a-f]{16}$")
+_IN_USE = ("scanning", "awaiting_identity", "awaiting_approval", "ripping", "verifying", "transferring", "placing")
+
+
+def _rip_dir_bytes(path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.lstat(os.path.join(root, f)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def _remove_rip_dir(cfg, name) -> int:
+    """Delete scratch/rips/<name> (a 16-hex fingerprint folder, never a symlink); returns the bytes freed."""
+    path = os.path.join(cfg.scratch_dir, "rips", name)
+    if not _FP16.match(name) or os.path.islink(path) or not os.path.isdir(path):
+        return 0
+    size = _rip_dir_bytes(path)
+    shutil.rmtree(path, ignore_errors=True)
+    return size
+
+
+def clean_scratch(cfg, led=None) -> dict:
+    """Free scratch space: remove every rip folder no live job needs (failed/rejected/skipped/done records and orphans).
+    Refuses while a disc is being worked on, because a rip in flight lives in that directory."""
+    from .ledger import Ledger
+    led = led or Ledger(cfg.state_path)
+    recs = led.all()
+    if any(r.state in ("scanning",) + WORKING_STATES for r in recs):
+        return _res(False, "refusing to clean scratch: a disc is being processed")
+    keep = {r.fingerprint for r in recs if r.state in _IN_USE}
+    freed, n = 0, 0
+    try:
+        names = os.listdir(os.path.join(cfg.scratch_dir, "rips"))
+    except OSError:
+        names = []
+    for name in names:
+        if name in keep:
+            continue
+        b = _remove_rip_dir(cfg, name)
+        if b or _FP16.match(name):
+            n += 1
+        freed += b
+    gb = round(freed / 2**30, 1)
+    return _res(True, f"removed {n} leftover rip folder(s), freed {gb} GB", removed=n, freed_gb=gb)
 
 
 def eject_now(cfg, led=None, drive_mod=None) -> dict:

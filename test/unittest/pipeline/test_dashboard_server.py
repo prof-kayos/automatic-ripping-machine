@@ -617,6 +617,16 @@ class ActionTests(Base):
         self.assertEqual(self.drive.ejects, 1)
         self.assertEqual(self.ledger.get(FP).state, "skipped")
 
+    def test_scratch_clean(self):
+        h = self.login()
+        scratch = os.path.join(self.td.name, "scratch")
+        self.httpd.cfg = replace(self.httpd.cfg, scratch_dir=scratch)
+        d = os.path.join(scratch, "rips", "e" * 16)
+        os.makedirs(d)
+        open(os.path.join(d, "x.mkv"), "wb").write(b"x" * 10)
+        st, js, _ = self.post(h, "/api/scratch/clean")
+        self.assertEqual((st, js["ok"], os.path.exists(d)), (200, True, False))
+
     def test_eject(self):
         h = self.login()
         self.put("ripping")

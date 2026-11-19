@@ -473,6 +473,7 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", r"/api/jobs/" + _FP + r"/(approve|reject|retry|skip|dismiss)", self.h_action, True, True),
             ("POST", r"/api/jobs/" + _FP + r"/identify", self.h_identify, True, True),
             ("POST", r"/api/drive/eject", self.h_eject, True, True),
+            ("POST", r"/api/scratch/clean", self.h_scratch_clean, True, True),
         ]
 
     def _dispatch(self, method):
@@ -700,6 +701,14 @@ class Handler(BaseHTTPRequestHandler):
         res = ops.identify(s.cfg, s.ledger, fp, body.get("title"), body.get("year"), body.get("tmdb_id"))
         self.server.audit("identify", fp, res.get("ok"), self._client_ip(),
                           text=f"identify: {res.get('message', '')}", **self._who(sid))
+        status, out = self._result(res)
+        self._json(status, out)
+
+    def h_scratch_clean(self, g, q, body, sid):
+        s = self.server
+        res = ops.clean_scratch(s.cfg, s.ledger)
+        self.server.audit("clean-scratch", None, res.get("ok"), self._client_ip(), text=f"clean-scratch: {res.get('message', '')}",
+                          **self._who(sid))
         status, out = self._result(res)
         self._json(status, out)
 

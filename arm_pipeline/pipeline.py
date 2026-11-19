@@ -301,7 +301,7 @@ class Pipeline:
             need = int(title.size_bytes * 1.1)
             free = shutil.disk_usage(cfg.scratch_dir).free
             if free < need:
-                raise PipelineError(f"scratch has {_fmt_bytes(free)} free, need about {_fmt_bytes(need)}", "rip")
+                raise PipelineError(f"scratch has {_fmt_bytes(free)} free, need about {_fmt_bytes(need)}; press Clean up leftovers on the dashboard, then Retry", "rip")
             if os.path.exists(final) and plan.action == decision.RIP_NEW:
                 raise PipelineError(f"target file already exists: {final}", "stage")
             st = library.folder_file_state(cfg.movies_dir, plan.target_folder) \

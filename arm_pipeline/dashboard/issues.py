@@ -199,12 +199,21 @@ def rule_drive(c):
     return out
 
 
+SCRATCH_MIN_FREE_GB = 90            # a 4K disc is about 77 GB and a rip needs the title size + 10%
+
+
 def rule_scratch(c):
-    pct = (c.status.get("scratch") or {}).get("used_pct")
-    if isinstance(pct, (int, float)) and pct >= SCRATCH_WARN:
-        return [_issue("scratch-full", "critical" if pct >= SCRATCH_CRIT else "warning",
-                       "Scratch disk is almost full", f"{pct:.0f}% used; a rip needs room for the full disc image.")]
-    return []
+    sc = c.status.get("scratch") or {}
+    pct, free, rips = sc.get("used_pct"), sc.get("free_gb"), sc.get("rips_gb") or 0
+    low = isinstance(free, (int, float)) and free < SCRATCH_MIN_FREE_GB
+    full = isinstance(pct, (int, float)) and pct >= SCRATCH_WARN
+    if not (low or full):
+        return []
+    sev = "critical" if (isinstance(pct, (int, float)) and pct >= SCRATCH_CRIT) else "warning"
+    detail = (f"{free:.0f} GB free" if isinstance(free, (int, float)) else "low") + \
+             f"; a 4K rip needs about {SCRATCH_MIN_FREE_GB} GB. Leftover rips hold {rips:.0f} GB."
+    return [_issue("scratch-full", sev, "Scratch disk is low on space", detail, None, None,
+                   [_action("clean-scratch", "Clean up leftovers", "", True, path="/api/scratch/clean")])]
 
 
 def rule_integrations(c):

@@ -204,11 +204,19 @@ class IssueTests(DashCase):
         self.assertIsNone(by_id(self.run_issues(drive=drv), "disc-"))
 
     def test_scratch(self):
-        sc = lambda p: {"free_gb": 1, "total_gb": 10, "used_pct": p, "rips_gb": 0}
+        sc = lambda p, free=500: {"free_gb": free, "total_gb": 1000, "used_pct": p, "rips_gb": 0}
         self.assertIsNone(by_id(self.run_issues(scratch=sc(84.9)), "scratch"))
         self.assertEqual(by_id(self.run_issues(scratch=sc(85)), "scratch")["severity"], "warning")
         self.assertEqual(by_id(self.run_issues(scratch=sc(95)), "scratch")["severity"], "critical")
         self.assertIsNone(by_id(self.run_issues(scratch=sc(None)), "scratch"))
+
+    def test_scratch_low_for_a_4k_rip_offers_cleanup(self):
+        i = by_id(self.run_issues(scratch={"free_gb": 60, "total_gb": 200, "used_pct": 70, "rips_gb": 55}), "scratch")
+        self.assertEqual(i["severity"], "warning")
+        self.assertIn("55 GB", i["detail"])
+        self.assertEqual([a["path"] for a in i["actions"]], ["/api/scratch/clean"])
+        self.assertTrue(i["actions"][0]["confirm"])
+        self.assertIsNone(by_id(self.run_issues(scratch={"free_gb": 120, "total_gb": 200, "used_pct": 40, "rips_gb": 0}), "scratch"))
 
     def test_integrations(self):
         sv = {"plex": {"configured": False, "reachable": None}, "jellyfin": {"configured": False, "reachable": None},
