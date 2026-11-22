@@ -54,7 +54,8 @@ class VerifyResult:
     def summary(self) -> str:
         """One line for Slack."""
         if not self.ok:
-            bad = next((c for c in self.checks if not c.ok and not c.skipped), None)
+            fails = [c for c in self.checks if not c.ok and not c.skipped]
+            bad = next((c for c in fails if c.name.startswith("T4")), fails[0] if fails else None)   # the full decode is the verdict
             msg = f"FAILED: {bad.name}: {bad.detail}" if bad else "FAILED"
             return msg
         tiers = ", ".join(f"{c.name.split()[0]} {_coarse(c.seconds)}"
@@ -225,6 +226,9 @@ def sample_windows(duration_s: float, windows: int, seconds: int) -> list[tuple[
 
 # ---------------------------------------------------------------- orchestration
 
+PREROLL_S = 30.0          # how much earlier a flagged sampled window is re-tested
+
+
 def verify_rip(path: str, expect: Expect, cfg, makemkv_log_text: str = "", progress=None) -> VerifyResult:
     """Run the tiers. Never raises for a failed check; VerifyError only for a missing file."""
     say = progress or (lambda _m: None)
@@ -233,9 +237,10 @@ def verify_rip(path: str, expect: Expect, cfg, makemkv_log_text: str = "", progr
     start = time.monotonic()
     checks: list[CheckResult] = []
     warnings: list[str] = []
+    notes: list[str] = []                      # shown to the owner but do NOT trigger the full decode
 
     def finish(ok: bool, escalated: bool = False) -> VerifyResult:
-        return VerifyResult(ok, checks, warnings, escalated, time.monotonic() - start)
+        return VerifyResult(ok, checks, warnings + notes, escalated, time.monotonic() - start)
 
     # T0
     t0 = time.monotonic()
@@ -277,10 +282,13 @@ def verify_rip(path: str, expect: Expect, cfg, makemkv_log_text: str = "", progr
             "-ss", f"{s:.3f}", "-t", f"{n:.3f}", "-i", path,
             "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-"], 900.0)
 
+    flagged: list[tuple[float, float]] = []
+
     def t3() -> CheckResult:
         t = time.monotonic()
         with ThreadPoolExecutor(max_workers=2) as ex:      # bounded parallelism
             results = list(ex.map(one_window, wins))
+        flagged.extend(w for w, r in zip(wins, results) if not r.ok)
         bad = [r for r in results if not r.ok]
         detail = f"{bad[0].name}: {bad[0].detail}" if bad else f"{len(results)} windows"
         return CheckResult("T3 sampled decode", not bad, detail, time.monotonic() - t)
@@ -289,16 +297,36 @@ def verify_rip(path: str, expect: Expect, cfg, makemkv_log_text: str = "", progr
         f2, f3 = ex.submit(t2), ex.submit(t3)
         r2, r3 = f2.result(), f3.result()
     checks.extend([r2, r3])
-    if not (r2.ok and r3.ok):
+    if not r2.ok:
         return finish(False)
+    if not r3.ok:
+        # A sampled window starts after a seek, where a decoder can complain about the first frames (e.g. HEVC "First slice in a
+        # frame missing") even in a sound file. Real damage stays at the same place in the file whatever the seek point, a seek
+        # artifact does not. So re-test each flagged window starting PREROLL_S earlier (a different keyframe, with the original span
+        # now decoded mid-stream): clean => seek artifact (warning only); still bad => confirm with the full decode (T4).
+        say("verify T3 retry: flagged window(s) from an earlier seek point")
+        again = []
+        for s0, n0 in flagged:
+            a = max(0.0, s0 - PREROLL_S)
+            again.append(one_window((a, n0 + (s0 - a))))
+        if again and all(c.ok for c in again):
+            spans = ", ".join(f"{s0:.0f}s" for s0, _ in flagged)
+            checks.append(CheckResult("T3 retry", True, f"clean from an earlier seek: {len(flagged)} window(s)", 0.0))
+            notes.append(f"sampled decode flagged window(s) at {spans} only at the seek start (clean when decoded from "
+                            f"{PREROLL_S:.0f}s earlier): {r3.detail[:120]}")
+            r3 = CheckResult("T3 sampled decode", True, "seek-start noise only", r3.seconds)
+            checks[-2] = r3                                    # the retry cleared it
+        else:
+            warnings.append(f"sampled decode flagged {r3.detail[:160]} and it persisted from an earlier seek; "
+                            "confirming with a full decode")
 
     # T4: escalation only
     if cfg.verify_full_decode or warnings:
-        why = "configured" if cfg.verify_full_decode and not warnings else "warnings present"
+        why = "configured" if cfg.verify_full_decode and not warnings else ("a sampled window was flagged" if not r3.ok else "warnings present")
         say(f"verify T4 full decode ({why})")
         timeout = max(3600.0, 4.0 * (dur or expect.duration_s) + 600.0)
         r4 = _ffmpeg_check("T4 full decode", [cfg.ffmpeg, "-v", "error", "-xerror", "-nostdin", "-i", path,
-                                              "-map", "0:v", "-map", "0:a", "-f", "null", "-"], timeout)
+                                              "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-"], timeout)
         checks.append(r4)
         return finish(r4.ok, escalated=True)
     checks.append(CheckResult("T4 full decode", True, "not needed", skipped=True))

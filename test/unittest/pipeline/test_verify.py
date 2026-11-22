@@ -181,3 +181,50 @@ class NullMuxerNoiseTests(unittest.TestCase):
         real = b"[hevc @ 0x1] Invalid NAL unit size\n"
         self.assertEqual(verify._significant_stderr(noise + real).strip(), real.strip())
         self.assertIn(b"matroska", verify._significant_stderr(b"[matroska,webm @ 0x2] Read error at pos. 5\n"))
+
+
+class T3EscalatesToFullDecode(unittest.TestCase):
+    """A flagged sampled window is re-tested from an earlier seek point; only if it persists is the full decode run
+    (HEVC seek-start noise must not fail a sound rip, real damage must still fail)."""
+
+    def run_with(self, retry_ok, t4_ok=True):
+        import types
+        from unittest import mock
+        from arm_pipeline import verify as v
+        calls = []
+
+        def fake(name, cmd, timeout):
+            calls.append(name)
+            if name.startswith("window"):
+                ss = float(cmd[cmd.index("-ss") + 1])
+                is_retry = ss < 752                        # the first pass starts at 752 s, the retry 30 s earlier
+                ok = retry_ok if is_retry else False
+                return v.CheckResult(name, ok, "" if ok else "exit 0: [hevc @ 0x1] First slice in a frame missing", 0.1)
+            if name.startswith("T4"):
+                return v.CheckResult(name, t4_ok, "" if t4_ok else "exit 1: real corruption at 5000s", 0.1)
+            return v.CheckResult(name, True, "", 0.1)
+        info = {"format": {"duration": "7200", "size": "9000000000"}}
+        cfg = types.SimpleNamespace(ffprobe="ffprobe", ffmpeg="ffmpeg", sample_windows=1, sample_seconds=10, verify_full_decode=False)
+        with mock.patch.object(v, "_ffmpeg_check", fake), mock.patch.object(v, "probe", lambda p, f="ffprobe": info), \
+                mock.patch.object(v, "_t1", lambda i, s, e: ([], [])), mock.patch.object(v, "sample_windows", lambda d, n, s: [(752.0, 10.0)]), \
+                mock.patch("os.path.isfile", lambda p: True), mock.patch("os.path.getsize", lambda p: 9000000000):
+            return v.verify_rip("/x.mkv", v.Expect(duration_s=7200, min_size_bytes=1), cfg), calls
+
+    def test_seek_start_noise_cleared_by_an_earlier_seek_passes_without_the_full_decode(self):
+        r, calls = self.run_with(retry_ok=True)
+        self.assertTrue(r.ok, r.summary())
+        self.assertFalse(r.escalated)
+        self.assertFalse(any(c.startswith("T4") for c in calls))
+        self.assertIn("only at the seek start", r.summary())
+
+    def test_persisting_flag_runs_the_full_decode_and_a_clean_one_passes(self):
+        r, calls = self.run_with(retry_ok=False, t4_ok=True)
+        self.assertTrue(r.ok, r.summary())
+        self.assertTrue(r.escalated)
+        self.assertIn("persisted", r.summary())
+
+    def test_persisting_flag_and_failed_full_decode_fails_naming_the_full_decode(self):
+        r, _ = self.run_with(retry_ok=False, t4_ok=False)
+        self.assertFalse(r.ok)
+        self.assertIn("T4", r.summary())
+        self.assertIn("real corruption", r.summary())
