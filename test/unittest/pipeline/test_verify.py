@@ -228,3 +228,25 @@ class T3EscalatesToFullDecode(unittest.TestCase):
         self.assertFalse(r.ok)
         self.assertIn("T4", r.summary())
         self.assertIn("real corruption", r.summary())
+
+
+class RipFailureReason(unittest.TestCase):
+    LOG = ('MSG:2003,0,3,"Error \'Scsi error - MEDIUM ERROR:L-EC UNCORRECTABLE ERROR\' occurred while reading \'/BDMV/STREAM/00058.m2ts\' at offset \'29118689280\'","x"\n'
+           'MSG:2003,0,3,"Error \'Posix error - No data available\' occurred while reading \'/dev/sr0\' at offset \'29118689280\'","x"\n'
+           'MSG:5004,128,2,"0 titles saved, 1 failed","%1 titles saved, %2 failed","0","1"\n')
+
+    def test_read_error_is_named_with_file_position_and_advice(self):
+        from arm_pipeline import verify as v
+        r = v.rip_failure_reason(self.LOG)
+        self.assertIn("could not be read", r)
+        self.assertIn("MEDIUM ERROR", r)
+        self.assertIn("00058.m2ts", r)
+        self.assertIn("27 GB", r)
+        self.assertIn("2 read errors", r)
+        self.assertIn("0 titles saved, 1 failed", r)
+        self.assertIn("Clean the disc", r)
+
+    def test_empty_or_unrecognised_logs_add_nothing(self):
+        from arm_pipeline import verify as v
+        self.assertEqual(v.rip_failure_reason(""), "")
+        self.assertEqual(v.rip_failure_reason("MSG:1005,0,0,\"MakeMKV started\"\n"), "")

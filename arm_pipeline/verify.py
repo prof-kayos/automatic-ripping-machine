@@ -100,6 +100,30 @@ def scan_makemkv_log(text: str) -> list[str]:
     return out
 
 
+def rip_failure_reason(log_text: str) -> str:
+    """Why MakeMKV saved nothing, in one line, from its robot-mode log. MakeMKV exits 0 even when it could not read the disc, so
+    the exit code alone says nothing. Empty string if the log holds no recognisable cause."""
+    if not log_text:
+        return ""
+    reads, first = 0, ""
+    saved_failed = ""
+    for line in log_text.splitlines():
+        if line.startswith("MSG:2003,"):                       # "Error '<cause>' occurred while reading '<file>' at offset '<n>'"
+            reads += 1
+            if not first:
+                m = re.search(r"Error '([^']*)' occurred while reading '([^']*)' at offset '(\d+)'", line)
+                if m and m.group(1) and "Scsi" in m.group(1):
+                    first = f"{m.group(1)} reading {m.group(2).rsplit('/', 1)[-1]} about {int(m.group(3)) / 2**30:.0f} GB in"
+        elif line.startswith("MSG:5004,"):
+            m = re.search(r'"(\d+) titles saved, (\d+) failed"', line)
+            if m:
+                saved_failed = f"{m.group(1)} titles saved, {m.group(2)} failed"
+    if first:
+        return (f"the disc could not be read ({first}; {reads} read errors; {saved_failed or 'save failed'}). "
+                "Clean the disc (soft cloth, centre to edge), check it for scratches, then Retry")
+    return saved_failed
+
+
 # ---------------------------------------------------------------- subprocess helpers
 
 def _nice10():  # runs in the child between fork and exec

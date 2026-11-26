@@ -336,7 +336,8 @@ class Pipeline:
                                    on_tick=rip_tick)
             mkvs = sorted(f for f in os.listdir(outdir) if f.lower().endswith(".mkv"))
             if rc != 0 or len(mkvs) != 1:
-                raise PipelineError(f"rip failed (exit {rc}, {len(mkvs)} output files)", "rip")
+                why = verify.rip_failure_reason(_read(log_path))
+                raise PipelineError(f"rip failed (exit {rc}, {len(mkvs)} output files)" + (f": {why}" if why else ""), "rip")
             ripped = os.path.join(outdir, mkvs[0])
             rip_s = int(time.time() - t0)
 
