@@ -436,6 +436,79 @@ class Pipeline:
             except Exception as e:                                     # noqa: BLE001
                 log.exception("poll failed for %s", rec.fingerprint)
                 self.slack.post(f":x: ARM error while resuming {rec.fingerprint}: {e}", needs_action=True)
+        self.poll_accept_verify()
+
+    def poll_accept_verify(self) -> None:
+        """The owner pressed 'Accept anyway' on a rip that failed a decoder-level check: place the KEPT rip (no re-rip)."""
+        d = os.path.join(self.cfg.state_path, "accept-verify")
+        try:
+            names = [n for n in os.listdir(d) if _FP.match(n)]
+        except OSError:
+            return
+        for fp in names:
+            try:
+                os.remove(os.path.join(d, fp))
+            except OSError:
+                pass
+            rec = self.ledger.get(fp)
+            try:
+                if rec is not None and rec.state == "failed":
+                    self.resume_from_kept_rip(rec)
+            except Exception as e:                                     # noqa: BLE001
+                log.exception("accept-verify failed for %s", fp)
+                self.slack.post(f":x: ARM error while placing the kept rip {fp}: {e}", needs_action=True)
+
+    def resume_from_kept_rip(self, rec) -> str:
+        """Stage and place the rip left in scratch after a decoder-level verification failure the owner has accepted.
+        Re-proves what the failed check did not cover: the container demuxes end to end (T2) and the staged copy matches
+        the source checksum. Then it follows the normal path (replacement approval, placement, server sync)."""
+        fp, cfg = rec.fingerprint, self.cfg
+        outdir, final, part = rec.paths.get("outdir", ""), rec.paths.get("final", ""), rec.paths.get("part", "")
+        plan_d = rec.plan or {}
+        ident = plan_d.get("identity") or {}
+        name = f"{ident.get('title', rec.title)} ({ident.get('year', '?')})"
+        mkvs = sorted(f for f in os.listdir(outdir) if f.lower().endswith(".mkv")) if os.path.isdir(outdir) else []
+        if len(mkvs) != 1 or not final or not part or not plan_d.get("target_folder"):
+            self._finish(fp, "failed", f":x: ARM cannot place the kept rip of *{name}*: the scratch rip or the plan is "
+                         "missing; use Retry to rip it again.", eject=False)
+            return "failed"
+        ripped = os.path.join(outdir, mkvs[0])
+        self.ledger.set_state(fp, "verifying", "owner accepted the failed decode check; proving the container and staging",
+                              paths=dict(rec.paths))
+        self.slack.post(f":wrench: ARM: placing the kept rip of *{name}* after the owner accepted the decode check "
+                        "(no re-rip).")
+        try:
+            t2 = verify._ffmpeg_check("T2 demux", [cfg.ffmpeg, "-v", "error", "-nostdin", "-i", ripped, "-map", "0",
+                                                   "-c", "copy", "-f", "null", "-"], max(600.0, os.path.getsize(ripped) / 5e6))
+            if not t2.ok:
+                raise PipelineError(f"container check failed: {t2.detail}", "verify")
+            folder = os.path.dirname(final)
+            if not os.path.isdir(folder):
+                os.mkdir(folder)
+            if os.path.exists(part):
+                os.remove(part)
+            size, digest = transfer.copy_with_hash(ripped, part, progress=lambda done, total: self.progress.update(
+                fp, "copying", done_bytes=done, total_bytes=total, note="copy to the share"))
+            transfer.verify_readback(part, size, digest)
+        except Exception as e:                                         # noqa: BLE001
+            if os.path.exists(part):
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+            self._finish(fp, "failed", f":x: ARM could not place the kept rip of *{name}*: {e}. Scratch kept.", eject=False)
+            return "failed"
+        info = (f"{_fmt_bytes(size)}; decode check ACCEPTED by owner (decoder diagnostics only, container proven, "
+                "copy checksum-verified on the share)")
+        self.ledger.set_state(fp, "transferring", info, paths={"outdir": outdir, "final": final, "part": part,
+                                                               "ripped": ripped, "info": info, "part_size": size,
+                                                               "part_sha256": digest})
+        plan = decision.Plan(action=plan_d.get("action") or decision.RIP_NEW, target_folder=plan_d["target_folder"],
+                             target_filename_stem=plan_d.get("stem", ""), existing_file=plan_d.get("existing") or "",
+                             needs_approval=bool(plan_d.get("needs_approval")))
+        if plan.action == decision.RIP_REPLACE and plan.needs_approval:
+            return self._ask_approval(fp, plan, name, info)
+        return self._place(fp, plan, name, None, eject=False)
 
     def _poll_approval(self, rec) -> None:
         fp = rec.fingerprint

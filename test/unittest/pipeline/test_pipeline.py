@@ -244,6 +244,48 @@ class PipelineE2E(PipelineBase):
         self.assertIn("failed", self.slack.joined())
         self.assertEqual(self.log, [])
 
+    def _fail_decode(self, p):
+        from unittest import mock
+        from arm_pipeline import verify as v
+        bad = v.VerifyResult(False, [v.CheckResult("T3 sampled decode", False,
+                             "window@752s: exit 0: [hevc @ 0x1] First slice in a frame missing.")])
+        with mock.patch.object(pl.verify, "verify_rip", return_value=bad):
+            return p.handle_new_disc()
+
+    def test_owner_can_accept_a_decode_only_failure_and_the_kept_rip_is_placed(self):
+        from arm_pipeline import operator as ops
+        self.write_scan()
+        p = self.pipe()
+        self.assertEqual(self._fail_decode(p), "failed")
+        rec = self.only_fp(p)
+        self.assertIn("T3 sampled decode", rec.message)
+        self.assertTrue(os.listdir(os.path.join(self.cfg.scratch_dir, "rips", rec.fingerprint)))        # scratch kept
+        self.assertFalse(os.path.exists(self.movie("Test Movie (2020)", "Test Movie (2020).mkv")))
+        r = ops.accept_verify(self.cfg, p.ledger, rec.fingerprint)
+        self.assertTrue(r["ok"], r)
+        p.poll_pending()
+        self.assertEqual(self.only_fp(p).state, "done")
+        self.assertTrue(os.path.exists(self.movie("Test Movie (2020)", "Test Movie (2020).mkv")))
+        self.assertEqual(os.listdir(self.movie("Test Movie (2020)")), ["Test Movie (2020).mkv"])       # no .part left
+        self.assertIn("ACCEPTED by owner", self.only_fp(p).message)
+        self.assertIn(("jelly.push", "Created"), self.log)
+
+    def test_accept_is_refused_for_a_container_failure_and_without_the_kept_rip(self):
+        from arm_pipeline import operator as ops
+        self.write_scan()
+        os.environ["FAKE_RIP_MODE"] = "truncate"
+        p = self.pipe()
+        self.assertEqual(p.handle_new_disc(), "failed")                                  # a real T1/T2-level failure
+        rec = self.only_fp(p)
+        self.assertFalse(ops.accept_verify(self.cfg, p.ledger, rec.fingerprint)["ok"])
+        os.environ["FAKE_RIP_MODE"] = ""
+        import shutil
+        shutil.rmtree(os.path.join(self.cfg.scratch_dir, "rips", rec.fingerprint), ignore_errors=True)
+        p.ledger.set_state(rec.fingerprint, "failed", "ARM failed at verify: verification FAILED: FAILED: T3 sampled decode: x")
+        r = ops.accept_verify(self.cfg, p.ledger, rec.fingerprint)
+        self.assertFalse(r["ok"])
+        self.assertIn("kept rip is gone", r["message"])
+
     def test_unknown_identity_keeps_disc_and_resumes_on_answer(self):
         self.write_scan()
         p = self.pipe(tmdb=FakeTmdb(identity=None))

@@ -146,6 +146,21 @@ class IssueTests(DashCase):
         self.assertEqual(acts["retry"]["path"], "/api/jobs/" + "a" * 16 + "/retry")
         self.assertIn("dismiss", acts)
 
+    def test_failed_decode_only_offers_accept_kept_rip(self):
+        dec = ":x: ARM failed at verify for *X*: verification FAILED: FAILED: T3 sampled decode: window@752s: exit 0: [hevc @ 0x1] First slice"
+        self.put("a" * 16, "failed", 50, message=dec, paths={"outdir": "/scratch/rips/" + "a" * 16})
+        acts = {a["id"]: a for a in by_id(self.run_issues(), "failed-")["actions"]}
+        self.assertIn("accept_verify", acts)
+        self.assertEqual(acts["accept_verify"]["path"], "/api/jobs/" + "a" * 16 + "/accept_verify")
+        self.assertTrue(isinstance(acts["accept_verify"]["confirm"], str))
+        self.assertIn("retry", acts)
+        # a container-level failure, or no kept rip, never offers it
+        self.put("b" * 16, "failed", 50, message=dec.replace("T3 sampled decode", "T2 demux"), paths={"outdir": "/x"})
+        self.put("c" * 16, "failed", 50, message=dec, paths={})
+        for fp in ("b", "c"):
+            ids = {a["id"] for a in by_id(self.run_issues(), "failed-" + fp * 16)["actions"]}
+            self.assertNotIn("accept_verify", ids, fp)
+
     def test_duplicates(self):
         self.put("a" * 16, "awaiting_identity", 300, label="My Disc")
         self.put("b" * 16, "failed", 200, label="My Disc")

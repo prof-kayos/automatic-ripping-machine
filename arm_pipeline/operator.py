@@ -233,6 +233,34 @@ def retry(cfg, led, fp) -> dict:
                 + "; if the disc is still in the drive it is picked up again within a few seconds, otherwise on its next insertion")
 
 
+_DECODE_ONLY = ("T3 sampled decode", "T4 full decode")
+
+
+def accept_verify(cfg, led, fp) -> dict:
+    """Owner override for a rip that failed ONLY a decoder-level check (sampled or full decode). The kept scratch rip is staged and
+    placed without re-ripping. Refused for any other failure (container, size, duration, read errors) and without the kept rip."""
+    rec, bad = _check(led, fp)
+    if bad:
+        return bad
+    if rec is None or rec.state != "failed":
+        return _res(False, "accept only applies to a failed disc")
+    msg = rec.message or ""
+    if "verification FAILED" not in msg or not any(t in msg for t in _DECODE_ONLY) or "T1 probe" in msg or "T2 demux" in msg:
+        return _res(False, "accept only applies to a rip that failed the decode check (not a container, size or rip failure)")
+    outdir = rec.paths.get("outdir", "")
+    try:
+        mkvs = [f for f in os.listdir(outdir) if f.lower().endswith(".mkv")]
+    except OSError:
+        mkvs = []
+    if len(mkvs) != 1 or not (rec.plan or {}).get("target_folder"):
+        return _res(False, "the kept rip is gone (or the plan is missing); use Retry to rip it again")
+    try:
+        _touch(cfg, "accept-verify", fp)
+    except ValueError as e:
+        return _res(False, str(e))
+    return _res(True, "accepted; the kept rip will be staged and placed within a few seconds (no re-rip)")
+
+
 def skip(cfg, led, fp, eject_fn=None, drive_mod=None) -> dict:
     rec, bad = _check(led, fp)
     if bad:

@@ -39,15 +39,15 @@ def main(argv=None) -> int:
             print(f"{r.fingerprint}  {r.state:18} {r.title or r.label:40} {r.message[:70]}")
         return 0
     if len(argv) < 2:
-        print("usage: arm_pipeline daemon | status | approve FP | reject FP | identify FP \"Title (Year)\" | retry FP (also undoes a skip) | skip FP\nrun from the install dir with the env loaded: cd /opt/arm && set -a && . ~/.env && set +a")
+        print("usage: arm_pipeline daemon | status | approve FP | reject FP | identify FP \"Title (Year)\" | retry FP (also undoes a skip) | skip FP | accept-verify FP\nrun from the install dir with the env loaded: cd /opt/arm && set -a && . ~/.env && set +a")
         return 2
     fp = argv[1]
     from . import operator as ops
     if not ops.valid_fp(fp):
         print("that is not a disc fingerprint (16 hex characters); run `status` to list them")
         return 2
-    if cmd in ("approve", "reject", "retry", "skip"):
-        res = getattr(ops, cmd)(cfg, led, fp)
+    if cmd in ("approve", "reject", "retry", "skip", "accept-verify"):
+        res = getattr(ops, cmd.replace("-", "_"))(cfg, led, fp)
     elif cmd == "identify":
         import re
         m = re.match(r"^\s*(.+?)\s*\((\d{4})\)\s*$", argv[2] if len(argv) > 2 else "")

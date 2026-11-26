@@ -129,11 +129,26 @@ def rule_approval(c):
     return out
 
 
+def _decode_only_failure(r) -> bool:
+    m = r.message or ""
+    return ("verification FAILED" in m and ("T3 sampled decode" in m or "T4 full decode" in m)
+            and "T1 probe" not in m and "T2 demux" not in m)
+
+
 def rule_failed(c):
-    return [_issue(f"failed-{r.fingerprint}", "critical", f"Failed: {_name(r)}", r.message or "Job failed.",
-                   r.fingerprint, _since(r),
-                   [_action("retry", "Retry", r.fingerprint), _action("dismiss", "Dismiss", r.fingerprint, True)])
-            for r in c.records if r.state == "failed"]
+    out = []
+    for r in c.records:
+        if r.state != "failed":
+            continue
+        acts = [_action("retry", "Retry", r.fingerprint)]
+        if _decode_only_failure(r) and (r.paths or {}).get("outdir"):
+            acts.append(_action("accept_verify", "Accept and place kept rip", r.fingerprint, confirm=(
+                "Accept this rip despite the decode warning and place the kept file? Only the decoder complained; the "
+                "container and the copy checksum are re-proven first. No re-rip.")))
+        acts.append(_action("dismiss", "Dismiss", r.fingerprint, True))
+        out.append(_issue(f"failed-{r.fingerprint}", "critical", f"Failed: {_name(r)}", r.message or "Job failed.",
+                          r.fingerprint, _since(r), acts))
+    return out
 
 
 def rule_duplicates(c):
