@@ -470,7 +470,7 @@ class Handler(BaseHTTPRequestHandler):
             ("GET", r"/api/jobs/" + _FP, self.h_job, True, False),
             ("GET", r"/api/events", self.h_events, True, False),
             ("GET", r"/api/tmdb/search", self.h_tmdb, True, False),
-            ("POST", r"/api/jobs/" + _FP + r"/(approve|reject|retry|skip|dismiss|accept_verify)", self.h_action, True, True),
+            ("POST", r"/api/jobs/" + _FP + r"/(approve|reject|retry|skip|dismiss|accept_verify|place_again)", self.h_action, True, True),
             ("POST", r"/api/jobs/" + _FP + r"/identify", self.h_identify, True, True),
             ("POST", r"/api/drive/eject", self.h_eject, True, True),
             ("POST", r"/api/scratch/clean", self.h_scratch_clean, True, True),

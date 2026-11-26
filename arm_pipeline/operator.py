@@ -261,6 +261,28 @@ def accept_verify(cfg, led, fp) -> dict:
     return _res(True, "accepted; the kept rip will be staged and placed within a few seconds (no re-rip)")
 
 
+def place_again(cfg, led, fp) -> dict:
+    """Re-run ONLY the placement of a replacement whose placement failed (e.g. a media server was down) and was rolled back.
+    The new file is still staged on the share and its checksum is recorded; the normal approval path re-proves the staged copy and
+    that the existing file is unchanged before swapping, so nothing is re-ripped and no extra approval click is needed."""
+    rec, bad = _check(led, fp)
+    if bad:
+        return bad
+    if rec is None or rec.state != "failed" or "ARM failed placing" not in (rec.message or ""):
+        return _res(False, "place-again only applies to a disc whose placement failed")
+    paths = dict(rec.paths or {})
+    part = paths.get("part", "")
+    if not (part and os.path.isfile(part) and paths.get("part_sha256") and paths.get("part_size")):
+        return _res(False, "the staged new file is gone; use Retry to rip it again")
+    paths.pop("replace", None)                       # the failed attempt was rolled back: forget its swap state
+    led.set_state(fp, "awaiting_approval", "placing again after a failed placement (already approved by the owner)", paths=paths)
+    try:
+        _touch(cfg, "approve", fp)
+    except ValueError as e:
+        return _res(False, str(e))
+    return _res(True, "placing again within a few seconds; the staged file and the existing file are re-checked first")
+
+
 def skip(cfg, led, fp, eject_fn=None, drive_mod=None) -> dict:
     rec, bad = _check(led, fp)
     if bad:

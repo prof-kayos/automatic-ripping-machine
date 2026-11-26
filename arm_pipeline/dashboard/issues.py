@@ -145,6 +145,10 @@ def rule_failed(c):
             acts.append(_action("accept_verify", "Accept and place kept rip", r.fingerprint, confirm=(
                 "Accept this rip despite the decode warning and place the kept file? Only the decoder complained; the "
                 "container and the copy checksum are re-proven first. No re-rip.")))
+        if "ARM failed placing" in (r.message or "") and (r.paths or {}).get("part_sha256"):
+            acts.insert(0, _action("place_again", "Place again", r.fingerprint, confirm=(
+                "Place the staged file again? Nothing is re-ripped; the staged copy and the existing file are re-checked "
+                "before anything is swapped.")))
         acts.append(_action("dismiss", "Dismiss", r.fingerprint, True))
         out.append(_issue(f"failed-{r.fingerprint}", "critical", f"Failed: {_name(r)}", r.message or "Job failed.",
                           r.fingerprint, _since(r), acts))

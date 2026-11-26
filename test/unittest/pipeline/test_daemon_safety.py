@@ -138,6 +138,28 @@ class ReviewRegressions(PipelineBase):
         self.assertTrue(os.path.exists(old))
         self.assertTrue(os.path.exists(old + ".arm-old"))                          # old kept until servers confirm
 
+    def test_place_again_after_a_failed_placement_swaps_without_reripping(self):
+        from arm_pipeline import operator as ops
+        p, rec, old = self.staged_replace()
+        old_size = os.path.getsize(old)
+        orig = p.plex.wait_for_file
+        p.plex.wait_for_file = lambda q, path, present, timeout, poll_s=5: False          # a server is down
+        open(os.path.join(self.cfg.state_path, "approve", rec.fingerprint), "w").close()
+        p.poll_pending()
+        self.assertEqual(self.only_fp(p).state, "failed")
+        self.assertEqual(os.path.getsize(old), old_size)                                  # rolled back, library as before
+        self.assertTrue(os.path.exists(old + ".part"))                                    # new file still staged
+        p.plex.wait_for_file = orig                                                       # the server is back
+        r = ops.place_again(self.cfg, p.ledger, rec.fingerprint)
+        self.assertTrue(r["ok"], r)
+        p.poll_pending()
+        self.assertEqual(self.only_fp(p).state, "done")
+        self.assertNotEqual(os.path.getsize(old), old_size)                               # the new file is in place
+        self.assertFalse(os.path.exists(old + ".part"))
+        self.assertFalse(os.path.exists(old + ".arm-old"))
+        # not offered for any other failure, nor without the staged file
+        self.assertFalse(ops.place_again(self.cfg, p.ledger, rec.fingerprint)["ok"])
+
     def test_failure_before_placement_rolls_back_and_resyncs(self):                # HIGH 2 (other half)
         p, rec, old = self.staged_replace()
         p.plex.wait_for_file = lambda q, path, present, timeout, poll_s=5: (self.log.append(("plex.wait", present)) or False)
